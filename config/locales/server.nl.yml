@@ -1,0 +1,33 @@
+nl:
+  site_settings:
+    account_security_enabled: "Account Security inschakelen. De plugin werkt in deze versie observerend en blokkeert accounts nooit automatisch."
+    account_security_ip_reputation_enabled: "IP-reputatie-intelligence binnen Account Security inschakelen."
+    account_security_abuseipdb_api_key: "AbuseIPDB API v2-sleutel. Wordt uitsluitend server-side als secret opgeslagen."
+    account_security_abuseipdb_usage_terms_acknowledged: "Bevestig dat het gebruik van AbuseIPDB is toegestaan onder het abonnement en de voorwaarden van de ingestelde API-sleutel."
+    account_security_abuseipdb_max_age_days: "Maximale ouderdom van meldingen die via AbuseIPDB CHECK worden meegenomen."
+    account_security_registration_checks_enabled: "Publieke registratie-IP-adressen na accountaanmaak beoordelen."
+    account_security_login_checks_enabled: "Publieke IP-adressen na succesvolle login beoordelen."
+    account_security_blacklist_sync_enabled: "De AbuseIPDB high-confidence blacklist lokaal vier keer per dag synchroniseren."
+    account_security_tor_feed_enabled: "De officiële Tor-exitlijst elk uur lokaal synchroniseren. Tor is alleen context en verhoogt zelfstandig nooit het risico."
+    account_security_abuse_reporting_enabled: "Sta provider-rapportage alleen toe voor een lokaal gecorreleerd authenticatiemisbruik-event waarvan de drempel aantoonbaar is overschreden. Standaard UIT. Versie 0.1 maakt zulke events nog niet aan, dus alleen deze setting inschakelen kan geen rapport versturen."
+    account_security_daily_check_budget: "Lokale veiligheidslimiet voor AbuseIPDB CHECK-verzoeken per UTC-dag."
+    account_security_registration_reserve: "Gereserveerde checks voor nieuwe registraties."
+    account_security_staff_reserve: "Gereserveerde checks voor nieuwe staff/admin-netwerken."
+    account_security_manual_reserve: "Gereserveerde checks voor handmatige beheerder-lookups."
+    account_security_ipv6_familiarity_prefix: "IPv6-prefix voor lokale netwerkherkenning per gebruiker."
+    account_security_user_network_retention_days: "Bewaartermijn voor compacte gebruiker-netwerkrelaties."
+    account_security_event_retention_days: "Bewaartermijn voor security-events."
+    account_security_low_risk_cache_retention_days: "Bewaartermijn voor Low/Observed IP-intelligence."
+    account_security_stats_retention_days: "Bewaartermijn voor geaggregeerde dagelijkse statistieken."
+    account_security_connect_timeout_ms: "Maximale connectietijd voor providerverzoeken."
+    account_security_read_timeout_ms: "Maximale leestijd voor providerverzoeken."
+    account_security_circuit_breaker_failure_count: "Aantal providerfouten voordat de circuit breaker opent."
+    account_security_circuit_breaker_window_minutes: "Tijdsvenster voor circuit-breaker fouten."
+    account_security_circuit_breaker_open_minutes: "Hoe lang providerverkeer wordt gepauzeerd als het circuit opent."
+
+  admin:
+    account_security:
+      trusted:
+        broad_confirmation_required: "Brede netwerkranges vereisen expliciete bevestiging."
+        duplicate: "Dit trusted network bestaat al."
+

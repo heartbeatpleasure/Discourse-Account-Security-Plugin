@@ -1,0 +1,143 @@
+plugins:
+  account_security_enabled:
+    default: false
+    client: false
+
+  account_security_ip_reputation_enabled:
+    default: true
+    client: false
+
+  account_security_abuseipdb_api_key:
+    default: ""
+    type: string
+    secret: true
+    client: false
+
+  account_security_abuseipdb_usage_terms_acknowledged:
+    default: false
+    client: false
+
+  account_security_abuseipdb_max_age_days:
+    default: 30
+    type: integer
+    min: 1
+    max: 365
+    client: false
+
+  account_security_registration_checks_enabled:
+    default: true
+    client: false
+
+  account_security_login_checks_enabled:
+    default: true
+    client: false
+
+  account_security_blacklist_sync_enabled:
+    default: true
+    client: false
+
+  account_security_tor_feed_enabled:
+    default: true
+    client: false
+
+  account_security_abuse_reporting_enabled:
+    default: false
+    client: false
+
+  account_security_daily_check_budget:
+    default: 1000
+    type: integer
+    min: 50
+    max: 50000
+    client: false
+
+  account_security_registration_reserve:
+    default: 250
+    type: integer
+    min: 0
+    max: 10000
+    client: false
+
+  account_security_staff_reserve:
+    default: 100
+    type: integer
+    min: 0
+    max: 10000
+    client: false
+
+  account_security_manual_reserve:
+    default: 50
+    type: integer
+    min: 0
+    max: 5000
+    client: false
+
+  account_security_ipv6_familiarity_prefix:
+    default: 64
+    type: integer
+    min: 48
+    max: 128
+    client: false
+
+  account_security_user_network_retention_days:
+    default: 90
+    type: integer
+    min: 30
+    max: 365
+    client: false
+
+  account_security_event_retention_days:
+    default: 180
+    type: integer
+    min: 30
+    max: 365
+    client: false
+
+  account_security_low_risk_cache_retention_days:
+    default: 30
+    type: integer
+    min: 7
+    max: 180
+    client: false
+
+  account_security_stats_retention_days:
+    default: 365
+    type: integer
+    min: 30
+    max: 1825
+    client: false
+
+  account_security_connect_timeout_ms:
+    default: 1000
+    type: integer
+    min: 250
+    max: 5000
+    client: false
+
+  account_security_read_timeout_ms:
+    default: 2500
+    type: integer
+    min: 500
+    max: 10000
+    client: false
+
+  account_security_circuit_breaker_failure_count:
+    default: 3
+    type: integer
+    min: 2
+    max: 20
+    client: false
+
+  account_security_circuit_breaker_window_minutes:
+    default: 2
+    type: integer
+    min: 1
+    max: 60
+    client: false
+
+  account_security_circuit_breaker_open_minutes:
+    default: 10
+    type: integer
+    min: 1
+    max: 120
+    client: false

@@ -1,0 +1,37 @@
+en:
+  site_settings:
+    account_security_enabled: "Enable Account Security. The plugin starts in observation mode and never blocks accounts automatically in this version."
+    account_security_ip_reputation_enabled: "Enable IP reputation intelligence inside Account Security."
+    account_security_abuseipdb_api_key: "AbuseIPDB API v2 key. Stored server-side as a secret and never serialized to the browser."
+    account_security_abuseipdb_usage_terms_acknowledged: "Confirm that this site's use of AbuseIPDB is permitted by the plan and terms attached to the configured API key. Live AbuseIPDB calls remain disabled until acknowledged."
+    account_security_abuseipdb_max_age_days: "Maximum report age requested from AbuseIPDB CHECK. Normal operation does not request verbose report comments."
+    account_security_registration_checks_enabled: "Assess public registration IP addresses after account creation."
+    account_security_login_checks_enabled: "Assess public IP addresses after successful login, prioritizing newly observed networks."
+    account_security_blacklist_sync_enabled: "Synchronize the AbuseIPDB high-confidence blacklist locally four times per day."
+    account_security_tor_feed_enabled: "Synchronize the official Tor exit list locally once per hour. Tor is context only and never raises risk by itself."
+    account_security_abuse_reporting_enabled: "Permit provider reporting only for a locally corroborated, threshold-exceeded authentication-abuse event. OFF by default. Version 0.1 does not generate such events yet, so enabling this setting alone cannot send a report."
+    account_security_daily_check_budget: "Local safety budget for AbuseIPDB CHECK requests per UTC day. Provider rate-limit headers remain authoritative."
+    account_security_registration_reserve: "Checks protected for new registrations before normal-user login enrichment may consume them."
+    account_security_staff_reserve: "Checks protected for new staff/admin login networks."
+    account_security_manual_reserve: "Checks protected for explicit administrator lookups."
+    account_security_ipv6_familiarity_prefix: "IPv6 prefix used only for per-user network familiarity. Provider checks still use the exact IPv6 address."
+    account_security_user_network_retention_days: "Days to retain compact user-to-network familiarity records."
+    account_security_event_retention_days: "Days to retain open/actioned security events. Benign events may be removed sooner by future versions."
+    account_security_low_risk_cache_retention_days: "Days to retain Low/Observed IP intelligence after it was last seen."
+    account_security_stats_retention_days: "Days to retain aggregate daily Account Security statistics."
+    account_security_connect_timeout_ms: "Maximum connect time for a provider request."
+    account_security_read_timeout_ms: "Maximum read time for a provider request."
+    account_security_circuit_breaker_failure_count: "Provider failures inside the configured window required to open the circuit."
+    account_security_circuit_breaker_window_minutes: "Failure-counting window for the provider circuit breaker."
+    account_security_circuit_breaker_open_minutes: "How long ordinary provider traffic is paused after the circuit breaker opens."
+
+  dashboard:
+    problem:
+      account_security_operational_health: "Account Security is degraded (%{status}; %{reason}). <a href='%{base_path}/admin/plugins/account-security-health'>Open Account Security Health</a>."
+
+  admin:
+    account_security:
+      trusted:
+        broad_confirmation_required: "Broad network ranges require explicit confirmation."
+        duplicate: "That trusted network already exists."
+
