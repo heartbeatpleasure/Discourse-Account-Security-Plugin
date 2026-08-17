@@ -26,6 +26,9 @@ module Jobs
       )
       correlation_cutoff = SiteSetting.account_security_correlation_retention_days.to_i.clamp(30, 730).days.ago
       delete_in_batches(
+        ::AccountSecurity::BrowserContinuity.where("last_seen_at < ?", correlation_cutoff),
+      )
+      delete_in_batches(
         ::AccountSecurity::AccountCorrelation
           .where.not(status: "confirmed_duplicate")
           .where("last_seen_at < ?", correlation_cutoff),

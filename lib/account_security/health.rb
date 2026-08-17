@@ -24,6 +24,8 @@ module ::AccountSecurity
           abuse_reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
           auth_abuse_detection_enabled: SiteSetting.account_security_auth_abuse_detection_enabled,
           account_correlation_enabled: SiteSetting.account_security_account_correlation_enabled,
+          browser_continuity_enabled: SiteSetting.account_security_browser_continuity_enabled,
+          correlation_auto_scan_frequency: SiteSetting.account_security_correlation_auto_scan_frequency,
           staff_notifications_enabled: SiteSetting.account_security_staff_notifications_enabled,
           notification_groups_configured: IncidentNotifier.notification_group_names.any?,
           user_notes_enabled: SiteSetting.account_security_user_notes_enabled,
@@ -44,6 +46,7 @@ module ::AccountSecurity
           active_notification_suppressions: safe_count(NotificationSuppression.active),
           open_account_correlations: safe_count(AccountCorrelation.unresolved),
           session_signatures: safe_count(SessionSignature),
+          browser_continuities: safe_count(BrowserContinuity),
         },
         privacy: {
           provider_receives_only_public_ip: true,
@@ -52,6 +55,8 @@ module ::AccountSecurity
           raw_authentication_identifiers_persisted_by_abuse_tracker: false,
           raw_user_agents_persisted_by_account_correlation: false,
           session_user_agent_correlation_uses_site_local_hmac: true,
+          browser_continuity_raw_token_persisted: false,
+          browser_continuity_is_positive_only_evidence: true,
           automatic_abuse_reporting: false,
         },
       }

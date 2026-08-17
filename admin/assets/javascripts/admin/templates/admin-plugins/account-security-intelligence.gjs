@@ -213,7 +213,7 @@ export default RouteTemplate(
             <div class="as-page__table-wrap">
               <table class="as-page__table">
                 <thead><tr><th>{{i18n "admin.account_security.events.user"}}</th><th>{{i18n "admin.account_security.intelligence.last_seen"}}</th></tr></thead>
-                <tbody>{{#each @controller.data.recent_users as |user|}}<tr><td>{{user.username}}</td><td>{{user.last_seen_at}}</td></tr>{{/each}}</tbody>
+                <tbody>{{#each @controller.data.recent_users as |user|}}<tr><td>{{user.username}}</td><td>{{user.last_seen_at_display}}</td></tr>{{/each}}</tbody>
               </table>
             </div>
           {{else}}

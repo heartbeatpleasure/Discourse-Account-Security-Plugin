@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.4.1
+# version: 0.5.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.4.1"
+  PLUGIN_VERSION = "0.5.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -38,6 +38,7 @@ after_initialize do
     app/models/account_security/temporary_ip_block.rb
     app/models/account_security/notification_suppression.rb
     app/models/account_security/session_signature.rb
+    app/models/account_security/browser_continuity.rb
     app/models/account_security/account_correlation.rb
     app/controllers/account_security/admin_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
@@ -54,9 +55,13 @@ after_initialize do
     lib/account_security/feeds/abuse_ip_db_blacklist.rb
     lib/account_security/network_familiarity.rb
     lib/account_security/session_signature_recorder.rb
+    lib/account_security/browser_continuity_recorder.rb
+    lib/account_security/core_ip_evidence.rb
     lib/account_security/account_correlation_policy.rb
     lib/account_security/account_correlation_service.rb
+    lib/account_security/account_correlation_scan_context.rb
     lib/account_security/account_correlation_scanner.rb
+    lib/account_security/account_correlation_scheduler.rb
     lib/account_security/authentication_abuse_tracker.rb
     lib/account_security/authentication_tracking_hooks.rb
     lib/account_security/staff_audit.rb
@@ -71,6 +76,8 @@ after_initialize do
     app/jobs/regular/account_security_check_ip.rb
     app/jobs/regular/account_security_process_auth_abuse_cluster.rb
     app/jobs/regular/account_security_rebuild_correlations.rb
+    app/jobs/regular/account_security_record_browser_continuity.rb
+    app/jobs/scheduled/account_security_auto_correlation_scan.rb
     app/jobs/scheduled/account_security_sync_tor_exit_list.rb
     app/jobs/scheduled/account_security_sync_abuseipdb_blacklist.rb
     app/jobs/scheduled/account_security_expire_temporary_ip_blocks.rb
@@ -82,6 +89,8 @@ after_initialize do
 
   require_dependency "session_controller"
   require_dependency "users_controller"
+  require_dependency "user_ip_address_history"
+  require_dependency "user_auth_token_log"
   SessionController.prepend(::AccountSecurity::SessionControllerTracking) unless SessionController < ::AccountSecurity::SessionControllerTracking
   UsersController.prepend(::AccountSecurity::UsersControllerRegistrationTracking) unless UsersController < ::AccountSecurity::UsersControllerRegistrationTracking
 
@@ -96,8 +105,9 @@ after_initialize do
     next unless reputation_enabled || correlation_enabled
 
     ip = user.registration_ip_address || user.ip_address
-    normalized = ::AccountSecurity::IpNormalizer.normalize_public(ip)
-    next if normalized.blank?
+    normalized = ::AccountSecurity::IpNormalizer.normalize(ip)
+    public_ip = ::AccountSecurity::IpNormalizer.normalize_public(normalized)
+    next if normalized.blank? || (!correlation_enabled && public_ip.blank?)
 
     token = UserAuthToken.where(user_id: user.id).order(id: :desc).first if correlation_enabled
     Jobs.enqueue(
@@ -121,8 +131,9 @@ after_initialize do
 
     token = UserAuthToken.where(user_id: user.id).order(id: :desc).first
     ip = token&.client_ip || user.ip_address
-    normalized = ::AccountSecurity::IpNormalizer.normalize_public(ip)
-    next if normalized.blank?
+    normalized = ::AccountSecurity::IpNormalizer.normalize(ip)
+    public_ip = ::AccountSecurity::IpNormalizer.normalize_public(normalized)
+    next if normalized.blank? || (!correlation_enabled && public_ip.blank?)
 
     Jobs.enqueue(
       :account_security_check_ip,
@@ -143,6 +154,7 @@ after_initialize do
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
     ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
+    ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
     ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
     ::AccountSecurity::AccountCorrelation.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
   end
@@ -150,12 +162,19 @@ after_initialize do
   on(:user_anonymized) do |args|
     user = args.is_a?(Hash) ? args[:user] : nil
     opts = args.is_a?(Hash) ? args[:opts] : nil
-    next unless user && opts&.key?(:anonymize_ip)
+    next unless user
+
+    # Correlation identifiers no longer serve a legitimate purpose once the
+    # account itself is anonymized, regardless of whether core IP anonymization
+    # was requested as part of the same operation.
+    ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
+    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
+
+    next unless opts&.key?(:anonymize_ip)
 
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
     ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
-    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
   end
 
   Discourse::Application.routes.append do

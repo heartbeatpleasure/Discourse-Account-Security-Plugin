@@ -2,6 +2,16 @@
 
 module ::AccountSecurity
   module SessionControllerTracking
+    def log_on_user(user, *args, **kwargs)
+      result = super
+      safely_track do
+        BrowserContinuityRecorder.capture_login!(cookies: cookies, user: user)
+      end
+      result
+    end
+
+    protected :log_on_user
+
     def forgot_password
       safely_track do
         AuthenticationAbuseTracker.password_reset(ip: request.remote_ip, login: params[:login])

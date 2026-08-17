@@ -1,0 +1,177 @@
+# frozen_string_literal: true
+
+require "ipaddr"
+require "set"
+
+module ::AccountSecurity
+  class AccountCorrelationScanContext
+    attr_reader :diagnostics
+
+    def initialize(cutoff: SessionSignatureRecorder.retention_cutoff)
+      @cutoff = cutoff
+      @networks_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
+      @network_users = Hash.new { |hash, network| hash[network] = Set.new }
+      @signatures_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
+      @signature_users = Hash.new { |hash, key| hash[key] = Set.new }
+      @browser_tokens_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
+      @browser_token_users = Hash.new { |hash, token| hash[token] = Set.new }
+      @trusted_networks = load_trusted_networks
+      @diagnostics = {
+        supplemental_network_relations: 0,
+        supplemental_signature_relations: 0,
+        supplemental_browser_relations: 0,
+        network_pairs_added: 0,
+        signature_pairs_added: 0,
+      }
+
+      load_networks!
+      load_signatures!
+      load_browser_continuity! if SiteSetting.account_security_browser_continuity_enabled
+    end
+
+    def add_candidate_pairs!(pairs, max_group_users:, max_pairs:)
+      diagnostics[:network_pairs_added] = add_group_pairs!(
+        pairs,
+        @network_users,
+        max_group_users: max_group_users,
+        max_pairs: max_pairs,
+      )
+      return diagnostics if pairs.length > max_pairs
+
+      diagnostics[:signature_pairs_added] = add_group_pairs!(
+        pairs,
+        @signature_users,
+        max_group_users: max_group_users,
+        max_pairs: max_pairs,
+      )
+      diagnostics
+    end
+
+    def evidence_for_pair(user_a_id, user_b_id)
+      user_a_id = user_a_id.to_i
+      user_b_id = user_b_id.to_i
+
+      shared_networks = (@networks_by_user[user_a_id] & @networks_by_user[user_b_id]).to_a
+      shared_networks.reject! { |network| trusted_network?(network) }
+      shared_network_set = shared_networks.to_set
+
+      shared_signatures = (@signatures_by_user[user_a_id] & @signatures_by_user[user_b_id]).count do |network, _signature|
+        shared_network_set.include?(network)
+      end
+
+      shared_browser_tokens = @browser_tokens_by_user[user_a_id] & @browser_tokens_by_user[user_b_id]
+      max_browser_users = shared_browser_tokens.map { |token| @browser_token_users[token].length }.max.to_i
+      max_network_users = shared_networks.map { |network| @network_users[network].length }.max.to_i
+
+      {
+        "shared_networks" => shared_networks.sort,
+        "shared_session_signature_count" => shared_signatures,
+        "browser_continuity_count" => shared_browser_tokens.length,
+        "max_browser_continuity_users" => max_browser_users,
+        "max_shared_network_users" => max_network_users,
+      }
+    end
+
+    private
+
+    def load_networks!
+      UserNetwork
+        .where(user_id: eligible_user_ids_scope)
+        .where("last_seen_at >= ?", @cutoff)
+        .pluck(:user_id, :network_key)
+        .each do |user_id, network|
+        add_network_relation(user_id, network)
+      end
+    rescue ActiveRecord::StatementInvalid => e
+      Rails.logger.warn("[account_security] correlation scan network preload failed class=#{e.class}")
+    end
+
+    def load_signatures!
+      SessionSignature
+        .where(user_id: eligible_user_ids_scope)
+        .where("last_seen_at >= ?", @cutoff)
+        .pluck(:user_id, :network_key, :signature_hash)
+        .each do |user_id, network, signature|
+          user_id = user_id.to_i
+          network = network.to_s
+          signature = signature.to_s
+          next if user_id <= 0 || network.blank? || signature.blank?
+
+          add_network_relation(user_id, network)
+          key = [network, signature].freeze
+          before = @signatures_by_user[user_id].length
+          @signatures_by_user[user_id] << key
+          @signature_users[key] << user_id
+          diagnostics[:supplemental_signature_relations] += 1 if @signatures_by_user[user_id].length > before
+        end
+    rescue ActiveRecord::StatementInvalid => e
+      Rails.logger.warn("[account_security] correlation scan signature preload failed class=#{e.class}")
+    end
+
+    def load_browser_continuity!
+      BrowserContinuity
+        .where(user_id: eligible_user_ids_scope)
+        .where("last_seen_at >= ?", BrowserContinuityRecorder.retention_cutoff)
+        .pluck(:user_id, :token_hash)
+        .each do |user_id, token_hash|
+          user_id = user_id.to_i
+          token_hash = token_hash.to_s
+          next if user_id <= 0 || !BrowserContinuityRecorder.valid_hash?(token_hash)
+
+          before = @browser_tokens_by_user[user_id].length
+          @browser_tokens_by_user[user_id] << token_hash
+          @browser_token_users[token_hash] << user_id
+          diagnostics[:supplemental_browser_relations] += 1 if @browser_tokens_by_user[user_id].length > before
+        end
+    rescue ActiveRecord::StatementInvalid => e
+      Rails.logger.warn("[account_security] correlation scan browser-continuity preload failed class=#{e.class}")
+    end
+
+    def add_network_relation(user_id, network)
+      user_id = user_id.to_i
+      network = network.to_s
+      return if user_id <= 0 || network.blank?
+
+      before = @networks_by_user[user_id].length
+      @networks_by_user[user_id] << network
+      @network_users[network] << user_id
+      diagnostics[:supplemental_network_relations] += 1 if @networks_by_user[user_id].length > before
+    end
+
+    def add_group_pairs!(pairs, groups, max_group_users:, max_pairs:)
+      added = 0
+      groups.each_value do |ids|
+        next if ids.length < 2 || ids.length > max_group_users
+
+        ids.to_a.sort.combination(2) do |pair|
+          before = pairs.length
+          pairs << pair
+          added += 1 if pairs.length > before
+          return added if pairs.length > max_pairs
+        end
+      end
+      added
+    end
+
+    def load_trusted_networks
+      TrustedNetwork.active.pluck(:network).filter_map do |value|
+        IPAddr.new(value.to_s)
+      rescue IPAddr::InvalidAddressError
+        nil
+      end
+    rescue ActiveRecord::StatementInvalid
+      []
+    end
+
+    def eligible_user_ids_scope
+      User.human_users.where(staged: false).where("users.id > 0").select(:id)
+    end
+
+    def trusted_network?(network)
+      candidate = IPAddr.new(network.to_s)
+      @trusted_networks.any? { |trusted| trusted.include?(candidate) }
+    rescue IPAddr::InvalidAddressError
+      false
+    end
+  end
+end

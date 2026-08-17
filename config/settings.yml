@@ -46,6 +46,69 @@ plugins:
     max: 730
     client: false
 
+  account_security_browser_continuity_enabled:
+    default: true
+    client: false
+    depends_on:
+      - account_security_account_correlation_enabled
+
+  account_security_correlation_auto_scan_frequency:
+    default: "monthly"
+    type: enum
+    choices:
+      - off
+      - weekly
+      - monthly
+      - quarterly
+      - yearly
+    client: false
+    depends_on:
+      - account_security_account_correlation_enabled
+
+  account_security_correlation_auto_scan_time:
+    default: "03:00"
+    type: string
+    regex: "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+    client: false
+    depends_on:
+      - account_security_account_correlation_enabled
+
+  account_security_correlation_auto_scan_weekday:
+    default: "sunday"
+    type: enum
+    choices:
+      - monday
+      - tuesday
+      - wednesday
+      - thursday
+      - friday
+      - saturday
+      - sunday
+    client: false
+    depends_on:
+      - account_security_correlation_auto_scan_frequency
+    depends_on_values:
+      account_security_correlation_auto_scan_frequency:
+        - weekly
+    depends_behavior: "hidden"
+    dependent_setting_display: "inline"
+
+  account_security_correlation_auto_scan_day_of_month:
+    default: 1
+    type: integer
+    min: 1
+    max: 28
+    client: false
+    depends_on:
+      - account_security_correlation_auto_scan_frequency
+    depends_on_values:
+      account_security_correlation_auto_scan_frequency:
+        - monthly
+        - quarterly
+        - yearly
+    depends_behavior: "hidden"
+    dependent_setting_display: "inline"
+
   account_security_auth_abuse_detection_enabled:
     default: true
     client: false

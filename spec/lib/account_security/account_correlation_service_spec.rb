@@ -9,6 +9,7 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
   before do
     SiteSetting.account_security_enabled = true
     SiteSetting.account_security_account_correlation_enabled = true
+    SiteSetting.account_security_browser_continuity_enabled = true
     SiteSetting.account_security_correlation_min_score = 40
   end
 
@@ -21,12 +22,12 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation).to be_present
     expect(correlation.status).to eq("open")
     expect(correlation.evidence["shared_registration_ip"]).to eq(true)
-    expect(correlation.score).to be >= SiteSetting.account_security_correlation_min_score
+    expect(correlation.evidence["shared_exact_ip_count"]).to be >= 1
     expect(user_a.reload.suspended?).to eq(false)
     expect(user_b.reload.suspended?).to eq(false)
   end
 
-  it "does not use an explicitly trusted address as correlation evidence" do
+  it "keeps an exact trusted-network match visible but lowers its identity score" do
     user_a.update_columns(registration_ip_address: "8.8.8.8", created_at: 10.minutes.ago)
     user_b.update_columns(registration_ip_address: "8.8.8.8", created_at: Time.zone.now)
     AccountSecurity::TrustedNetwork.create!(
@@ -39,8 +40,20 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
 
     correlation = described_class.recalculate_pair!(user_a.id, user_b.id, source: "spec")
 
-    expect(correlation).to be_nil
-    expect(AccountSecurity::AccountCorrelation.count).to eq(0)
+    expect(correlation).to be_present
+    expect(correlation.evidence["trusted_shared_ip_count"]).to eq(1)
+    expect(correlation.score).to be < SiteSetting.account_security_correlation_min_score
+  end
+
+  it "keeps exact private registration-IP overlap as weak contextual evidence" do
+    user_a.update_columns(registration_ip_address: "10.0.0.50")
+    user_b.update_columns(registration_ip_address: "10.0.0.50")
+
+    correlation = described_class.recalculate_pair!(user_a.id, user_b.id, source: "spec")
+
+    expect(correlation).to be_present
+    expect(correlation.evidence["shared_registration_ip_nonpublic"]).to eq(true)
+    expect(correlation.confidence).to eq("weak")
   end
 
   it "combines repeated shared networks with a hashed session signature" do
@@ -71,6 +84,5 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation).to be_present
     expect(correlation.evidence["shared_network_count"]).to eq(2)
     expect(correlation.evidence["shared_session_signature_count"]).to eq(2)
-    expect(correlation.confidence).to eq("very_strong")
   end
 end

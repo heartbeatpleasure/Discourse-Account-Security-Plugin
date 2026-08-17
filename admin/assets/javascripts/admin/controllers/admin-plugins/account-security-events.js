@@ -4,6 +4,7 @@ import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import getURL from "discourse/lib/get-url";
+import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
 
 export default class AdminPluginsAccountSecurityEventsController extends Controller {
   @tracked data;
@@ -18,6 +19,16 @@ export default class AdminPluginsAccountSecurityEventsController extends Control
     this.severity = "";
   }
 
+  decorateItem(item) {
+    return {
+      ...item,
+      detail_url: getURL(`/admin/plugins/account-security-events/${item.id}`),
+      last_seen_at_display: formatAccountSecurityDateTime(item.last_seen_at),
+      created_at_display: formatAccountSecurityDateTime(item.created_at),
+      reviewed_at_display: formatAccountSecurityDateTime(item.reviewed_at),
+    };
+  }
+
   @action
   async loadEvents() {
     this.isLoading = true;
@@ -25,10 +36,7 @@ export default class AdminPluginsAccountSecurityEventsController extends Control
       const data = await ajax("/admin/plugins/account-security/events.json", {
         data: { status: this.status, severity: this.severity },
       });
-      data.items = (data.items || []).map((item) => ({
-        ...item,
-        detail_url: getURL(`/admin/plugins/account-security-events/${item.id}`),
-      }));
+      data.items = (data.items || []).map((item) => this.decorateItem(item));
       this.data = data;
     } catch (error) {
       popupAjaxError(error);

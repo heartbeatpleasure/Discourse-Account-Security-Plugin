@@ -182,7 +182,7 @@ export default RouteTemplate(
             <div class="as-page__field"><label>{{i18n "admin.account_security.trusted.label"}}</label><input type="text" value={{@controller.label}} {{on "input" @controller.setLabel}} /></div>
           </div>
           <div class="as-page__field"><label>{{i18n "admin.account_security.trusted.reason"}}</label><input type="text" value={{@controller.reason}} {{on "input" @controller.setReason}} /></div>
-          <div class="as-page__field"><label>{{i18n "admin.account_security.trusted.expires"}}</label><input type="datetime-local" value={{@controller.expiresAt}} {{on "input" @controller.setExpires}} /></div>
+          <div class="as-page__field"><label>{{i18n "admin.account_security.trusted.expires"}}</label><input type="datetime-local" value={{@controller.expiresAt}} {{on "input" @controller.setExpires}} /><span class="as-page__hint">{{i18n "admin.account_security.trusted.expires_timezone" timezone=@controller.userTimezone}}</span></div>
           <label class="as-page__checkbox"><input type="checkbox" checked={{@controller.confirmBroad}} {{on "change" @controller.setConfirmBroad}} /><span>{{i18n "admin.account_security.trusted.confirm_broad"}}</span></label>
           <div class="as-page__buttons"><button class="btn btn-primary" type="button" {{on "click" @controller.addItem}}>{{i18n "admin.account_security.trusted.add"}}</button></div>
         </div>
@@ -194,7 +194,7 @@ export default RouteTemplate(
           <div class="as-page__table-wrap">
             <table class="as-page__table">
               <thead><tr><th>{{i18n "admin.account_security.trusted.network"}}</th><th>{{i18n "admin.account_security.trusted.label"}}</th><th>{{i18n "admin.account_security.trusted.reason"}}</th><th>{{i18n "admin.account_security.trusted.expires"}}</th><th></th></tr></thead>
-              <tbody>{{#each @controller.data.items as |item|}}<tr><td class="as-page__code">{{item.network}}</td><td>{{item.label}}</td><td>{{item.reason}}</td><td>{{if item.expires_at item.expires_at "—"}}</td><td><button class="btn btn-danger btn-small" type="button" {{on "click" (fn @controller.removeItem item)}}>{{i18n "admin.account_security.trusted.remove"}}</button></td></tr>{{/each}}</tbody>
+              <tbody>{{#each @controller.data.items as |item|}}<tr><td class="as-page__code">{{item.network}}</td><td>{{item.label}}</td><td>{{item.reason}}</td><td>{{item.expires_at_display}}</td><td><button class="btn btn-danger btn-small" type="button" {{on "click" (fn @controller.removeItem item)}}>{{i18n "admin.account_security.trusted.remove"}}</button></td></tr>{{/each}}</tbody>
             </table>
           </div>
         {{else}}

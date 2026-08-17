@@ -223,7 +223,7 @@ export default RouteTemplate(
               {{#each @controller.data.daily as |day|}}
                 <article class="as-stats__daily-card">
                   <div class="as-stats__daily-header">
-                    <h3>{{day.stat_date}}</h3>
+                    <h3>{{day.stat_date_display}}</h3>
                     <div class="as-stats__daily-subtitle">{{i18n "admin.account_security.statistics.daily_summary"}}</div>
                   </div>
                   <div class="as-stats__daily-groups">

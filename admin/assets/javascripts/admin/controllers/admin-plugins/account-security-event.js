@@ -3,6 +3,7 @@ import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
 
 export default class AdminPluginsAccountSecurityEventController extends Controller {
   @tracked data;
@@ -15,7 +16,7 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
   @tracked isWorking = false;
 
   resetState(model) {
-    this.data = model;
+    this.data = this.decorateData(model);
     this.resolutionReason = model?.event?.resolution_reason || "";
     this.durationMinutes = 1440;
     this.confirmTemporaryBlock = false;
@@ -23,6 +24,66 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
     this.suppressionDurationHours = 168;
     this.confirmNotificationSuppression = false;
     this.isWorking = false;
+  }
+
+  decorateData(data) {
+    if (!data) {
+      return data;
+    }
+
+    const event = data.event
+      ? {
+          ...data.event,
+          created_at_display: formatAccountSecurityDateTime(data.event.created_at),
+          last_seen_at_display: formatAccountSecurityDateTime(data.event.last_seen_at),
+          reviewed_at_display: formatAccountSecurityDateTime(data.event.reviewed_at),
+          user_note_created_at_display: formatAccountSecurityDateTime(
+            data.event.user_note_created_at
+          ),
+          notified_at_display: formatAccountSecurityDateTime(data.event.notified_at),
+        }
+      : null;
+
+    const intelligence = data.intelligence
+      ? {
+          ...data.intelligence,
+          last_reported_at_display: formatAccountSecurityDateTime(
+            data.intelligence.last_reported_at
+          ),
+          provider_checked_at_display: formatAccountSecurityDateTime(
+            data.intelligence.provider_checked_at
+          ),
+          next_check_after_display: formatAccountSecurityDateTime(
+            data.intelligence.next_check_after
+          ),
+        }
+      : null;
+
+    const temporaryBlock = data.temporary_block
+      ? {
+          ...data.temporary_block,
+          expires_at_display: formatAccountSecurityDateTime(
+            data.temporary_block.expires_at
+          ),
+        }
+      : null;
+
+    const notificationSuppression = data.notification_suppression
+      ? {
+          ...data.notification_suppression,
+          expires_at_display: formatAccountSecurityDateTime(
+            data.notification_suppression.expires_at
+          ),
+        }
+      : null;
+
+    return {
+      ...data,
+      event,
+      intelligence,
+      temporary_block: temporaryBlock,
+      notification_suppression: notificationSuppression,
+    };
   }
 
   get event() {
@@ -211,8 +272,8 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
   }
 
   async reloadData() {
-    this.data = await ajax(
-      `/admin/plugins/account-security/events/${this.event.id}.json`
+    this.data = this.decorateData(
+      await ajax(`/admin/plugins/account-security/events/${this.event.id}.json`)
     );
     this.resolutionReason = this.event?.resolution_reason || this.resolutionReason;
   }

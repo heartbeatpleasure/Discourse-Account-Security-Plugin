@@ -1,0 +1,53 @@
+# frozen_string_literal: true
+
+require "rails_helper"
+
+RSpec.describe AccountSecurity::AccountCorrelationScanContext do
+  fab!(:user_a) { Fabricate(:user) }
+  fab!(:user_b) { Fabricate(:user) }
+
+  before do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    SiteSetting.account_security_browser_continuity_enabled = true
+  end
+
+  it "preloads supplemental network, session and browser evidence without making browser continuity a pair generator" do
+    now = Time.zone.now
+    [user_a, user_b].each do |user|
+      AccountSecurity::UserNetwork.create!(
+        user_id: user.id,
+        network_key: "8.8.8.8/32",
+        address_family: "ipv4",
+        first_seen_at: now,
+        last_seen_at: now,
+        successful_login_count: 1,
+      )
+      AccountSecurity::SessionSignature.create!(
+        user_id: user.id,
+        network_key: "8.8.8.8/32",
+        signature_hash: "d" * 64,
+        first_seen_at: now,
+        last_seen_at: now,
+        observation_count: 1,
+      )
+      AccountSecurity::BrowserContinuity.create!(
+        user_id: user.id,
+        token_hash: "e" * 64,
+        first_seen_at: now,
+        last_seen_at: now,
+        observation_count: 1,
+      )
+    end
+
+    context = described_class.new
+    pairs = Set.new
+    context.add_candidate_pairs!(pairs, max_group_users: 20, max_pairs: 20_000)
+    evidence = context.evidence_for_pair(user_a.id, user_b.id)
+
+    expect(pairs).to include([user_a.id, user_b.id].sort)
+    expect(evidence["shared_networks"]).to include("8.8.8.8/32")
+    expect(evidence["shared_session_signature_count"]).to eq(1)
+    expect(evidence["browser_continuity_count"]).to eq(1)
+  end
+end

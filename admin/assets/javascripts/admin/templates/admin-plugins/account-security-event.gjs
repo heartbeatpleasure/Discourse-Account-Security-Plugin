@@ -188,7 +188,7 @@ export default RouteTemplate(
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.events.user"}}</div><div class="as-page__value">{{if @controller.event.user @controller.event.user.username "—"}}</div></div>
           <div class="as-page__item"><div class="as-page__label">IP</div><div class="as-page__value as-page__code">{{@controller.event.ip_address}}</div></div>
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.events.type"}}</div><div class="as-page__value">{{@controller.event.event_type}}</div></div>
-          <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.events.last_seen"}}</div><div class="as-page__value">{{@controller.event.last_seen_at}}</div></div>
+          <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.events.last_seen"}}</div><div class="as-page__value">{{@controller.event.last_seen_at_display}}</div></div>
           <div class="as-page__item"><div class="as-page__label">Tor</div><div class="as-page__value">{{@controller.event.context.is_tor}}</div></div>
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.blacklist"}}</div><div class="as-page__value">{{@controller.event.context.local_blacklist_match}}</div></div>
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.usage_type"}}</div><div class="as-page__value">{{if @controller.event.context.usage_type @controller.event.context.usage_type "—"}}</div></div>
@@ -200,7 +200,7 @@ export default RouteTemplate(
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.staff_targeted"}}</div><div class="as-page__value">{{@controller.event.context.staff_targeted}}</div></div>
           {{/if}}
           {{#if @controller.event.notified_at}}
-            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.notified_at"}}</div><div class="as-page__value">{{@controller.event.notified_at}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.notified_at"}}</div><div class="as-page__value">{{@controller.event.notified_at_display}}</div></div>
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.notification_kind"}}</div><div class="as-page__value">{{@controller.event.notification_kind}}</div></div>
           {{/if}}
         </div>
@@ -213,7 +213,7 @@ export default RouteTemplate(
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.score"}}</div><div class="as-page__value">{{@controller.data.intelligence.primary_score}}</div></div>
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.total_reports"}}</div><div class="as-page__value">{{@controller.data.intelligence.total_reports}}</div></div>
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.distinct_reporters"}}</div><div class="as-page__value">{{@controller.data.intelligence.distinct_reporters}}</div></div>
-            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.last_reported"}}</div><div class="as-page__value">{{if @controller.data.intelligence.last_reported_at @controller.data.intelligence.last_reported_at "—"}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.last_reported"}}</div><div class="as-page__value">{{@controller.data.intelligence.last_reported_at_display}}</div></div>
           </div>
         </section>
       {{/if}}
@@ -241,7 +241,7 @@ export default RouteTemplate(
         <div class="as-page__panel">
           <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.notification_suppression_title"}}</h2><p class="as-page__muted">{{i18n "admin.account_security.event_detail.notification_suppression_description"}}</p></div>
           {{#if @controller.notificationSuppressionActive}}
-            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.notification_suppressed_until"}} {{@controller.data.notification_suppression.expires_at}}</div>
+            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.notification_suppressed_until"}} {{@controller.data.notification_suppression.expires_at_display}}</div>
             <button class="btn" type="button" disabled={{@controller.isWorking}} {{on "click" @controller.releaseNotificationSuppression}}>{{i18n "admin.account_security.event_detail.release_notification_suppression"}}</button>
           {{else if @controller.canCreateNotificationSuppression}}
             <div class="as-page__stack">
@@ -265,7 +265,7 @@ export default RouteTemplate(
         <div class="as-page__panel">
           <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.user_note_title"}}</h2><p class="as-page__muted">{{i18n "admin.account_security.event_detail.user_note_description"}}</p></div>
           {{#if @controller.event.user_note_created_at}}
-            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.user_note_created"}} {{@controller.event.user_note_created_at}}</div>
+            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.user_note_created"}} {{@controller.event.user_note_created_at_display}}</div>
           {{else if @controller.canAddUserNote}}
             <button class="btn" type="button" disabled={{@controller.isWorking}} {{on "click" @controller.addUserNote}}>{{i18n "admin.account_security.event_detail.add_user_note"}}</button>
           {{else}}
@@ -276,7 +276,7 @@ export default RouteTemplate(
         <div class="as-page__panel">
           <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.temporary_block_title"}}</h2><p class="as-page__muted">{{i18n "admin.account_security.event_detail.temporary_block_description"}}</p></div>
           {{#if @controller.temporaryBlockActive}}
-            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.block_active_until"}} {{@controller.data.temporary_block.expires_at}}</div>
+            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.block_active_until"}} {{@controller.data.temporary_block.expires_at_display}}</div>
             <button class="btn" type="button" disabled={{@controller.isWorking}} {{on "click" @controller.releaseTemporaryBlock}}>{{i18n "admin.account_security.event_detail.release_block"}}</button>
           {{else if @controller.canCreateTemporaryBlock}}
             <div class="as-page__stack">

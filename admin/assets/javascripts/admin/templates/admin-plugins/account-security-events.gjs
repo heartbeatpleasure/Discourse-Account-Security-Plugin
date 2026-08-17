@@ -218,7 +218,7 @@ export default RouteTemplate(
                 <tbody>
                   {{#each @controller.data.items as |item|}}
                     <tr>
-                      <td>{{item.last_seen_at}}</td>
+                      <td>{{item.last_seen_at_display}}</td>
                       <td>{{if item.user item.user.username "—"}}</td>
                       <td class="as-page__code">{{item.ip_address}}</td>
                       <td>{{item.event_type}}</td>

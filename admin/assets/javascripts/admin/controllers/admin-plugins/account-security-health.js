@@ -40,6 +40,13 @@ export default class AdminPluginsAccountSecurityHealthController extends Control
     this.syncingFeed = null;
   }
 
+  get correlationAutoScanLabel() {
+    const allowed = ["off", "weekly", "monthly", "quarterly", "yearly"];
+    const value = this.data?.configuration?.correlation_auto_scan_frequency;
+    const key = allowed.includes(value) ? value : "monthly";
+    return i18n(`admin.account_security.correlations.frequencies.${key}`);
+  }
+
   get overallReasonText() {
     const reason = this.data?.overall_reason;
     if (!reason) {

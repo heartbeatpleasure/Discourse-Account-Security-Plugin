@@ -209,6 +209,7 @@ module ::AccountSecurity
         open_count: AccountCorrelation.where(status: "open").count,
         strong_open_count: AccountCorrelation.where(status: %w[open monitor], confidence: %w[strong very_strong]).count,
         scan: AccountCorrelationScanner.status,
+        schedule: AccountCorrelationScheduler.schedule_status,
         items: items.map { |item| serialize_correlation(item) },
       )
     end
@@ -241,7 +242,7 @@ module ::AccountSecurity
         return render_json_error(I18n.t("admin.account_security.correlations.disabled"), status: :unprocessable_entity)
       end
 
-      result = AccountCorrelationScanner.enqueue!(requested_by_id: current_user.id)
+      result = AccountCorrelationScanner.enqueue!(requested_by_id: current_user.id, source: "manual")
       if result[:success]
         StaffAudit.log!(actor: current_user, action: "account_correlation_scan_started")
         render_json_dump(result)
@@ -503,21 +504,85 @@ module ::AccountSecurity
         last_seen_at: item.last_seen_at&.iso8601,
         reviewed_at: item.reviewed_at&.iso8601,
         resolution_reason: item.resolution_reason,
-        user_a: item.user_a && { id: item.user_a.id, username: item.user_a.username },
-        user_b: item.user_b && { id: item.user_b.id, username: item.user_b.username },
+        user_a: serialize_correlation_user(item.user_a),
+        user_b: serialize_correlation_user(item.user_b),
         reviewed_by: item.reviewed_by && { id: item.reviewed_by.id, username: item.reviewed_by.username },
         evidence: {
           shared_registration_ip: evidence["shared_registration_ip"] == true,
+          shared_registration_ip_public: evidence["shared_registration_ip_public"] == true,
+          shared_registration_ip_nonpublic: evidence["shared_registration_ip_nonpublic"] == true,
           same_current_ip: evidence["same_current_ip"] == true,
+          same_current_ip_public: evidence["same_current_ip_public"] == true,
+          shared_exact_ip_count: evidence["shared_exact_ip_count"].to_i,
+          shared_public_ip_count: evidence["shared_public_ip_count"].to_i,
+          untrusted_public_ip_count: evidence["untrusted_public_ip_count"].to_i,
+          shared_nonpublic_ip_count: evidence["shared_nonpublic_ip_count"].to_i,
+          shared_history_ip_count: evidence["shared_history_ip_count"].to_i,
+          shared_auth_ip_count: evidence["shared_auth_ip_count"].to_i,
+          trusted_shared_ip_count: evidence["trusted_shared_ip_count"].to_i,
+          tor_shared_ip_count: evidence["tor_shared_ip_count"].to_i,
+          hosting_shared_ip_count: evidence["hosting_shared_ip_count"].to_i,
+          mobile_shared_ip_count: evidence["mobile_shared_ip_count"].to_i,
+          local_blacklist_shared_ip_count: evidence["local_blacklist_shared_ip_count"].to_i,
+          shared_ip_details: serialize_shared_ip_details(evidence["shared_ip_details"]),
           shared_network_count: evidence["shared_network_count"].to_i,
           shared_networks: Array(evidence["shared_networks"]).map(&:to_s).first(AccountCorrelationService::MAX_SHARED_NETWORKS_IN_PAYLOAD),
           shared_session_signature_count: evidence["shared_session_signature_count"].to_i,
+          browser_continuity_count: evidence["browser_continuity_count"].to_i,
+          max_browser_continuity_users: evidence["max_browser_continuity_users"].to_i,
+          browser_continuity_positive_only: evidence["browser_continuity_positive_only"] == true,
           registration_delta_minutes: evidence["registration_delta_minutes"].to_i,
           max_shared_network_users: evidence["max_shared_network_users"].to_i,
+          max_shared_exact_ip_users: evidence["max_shared_exact_ip_users"].to_i,
           large_shared_network: evidence["large_shared_network"] == true,
+          score_breakdown: serialize_score_breakdown(evidence["score_breakdown"]),
           raw_user_agent_stored: false,
         },
       }
+    end
+
+    def serialize_correlation_user(user)
+      return nil if user.blank?
+      {
+        id: user.id,
+        username: user.username,
+        created_at: user.created_at&.iso8601,
+        last_seen_at: user.last_seen_at&.iso8601,
+        active: user.active? == true,
+        suspended: user.suspended? == true,
+      }
+    end
+
+    def serialize_shared_ip_details(value)
+      Array(value).first(AccountCorrelationService::MAX_SHARED_IPS_IN_PAYLOAD).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        ip = IpNormalizer.normalize(raw["ip_address"])
+        next if ip.blank?
+
+        {
+          ip_address: ip,
+          sources_a: Array(raw["sources_a"]).map(&:to_s) & CoreIpEvidence::SOURCES,
+          sources_b: Array(raw["sources_b"]).map(&:to_s) & CoreIpEvidence::SOURCES,
+          user_count: raw["user_count"].to_i,
+          public: raw["public"] == true,
+          trusted: raw["trusted"] == true,
+          tor: raw["tor"] == true,
+          local_blacklist: raw["local_blacklist"] == true,
+          usage_type: clean_optional(raw["usage_type"], 80),
+          isp: clean_optional(raw["isp"], 160),
+          hosting: raw["hosting"] == true,
+          mobile: raw["mobile"] == true,
+        }
+      end
+    end
+
+    def serialize_score_breakdown(value)
+      Array(value).first(20).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        key = raw["key"].to_s
+        next unless key.match?(/\A[a-z0-9_]{1,40}\z/)
+        { key: key, points: raw["points"].to_i, count: raw["count"].to_i }
+      end
     end
 
     def serialize_trusted_network(item)

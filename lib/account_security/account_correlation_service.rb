@@ -9,19 +9,27 @@ module ::AccountSecurity
     MAX_NETWORK_GROUP_USERS = 20
     MAX_CANDIDATES_PER_OBSERVATION = 50
     MAX_SHARED_NETWORKS_IN_PAYLOAD = 8
+    MAX_SHARED_IPS_IN_PAYLOAD = CoreIpEvidence::MAX_STORED_SHARED_IPS
 
     def observe!(user:, ip:, trigger:, network: nil, session_signature: nil)
       return [] unless enabled?
       return [] if user.blank? || !user.human? || user.staged? || user.id.to_i <= 0
 
-      normalized_ip = IpNormalizer.normalize_public(ip)
+      normalized_ip = IpNormalizer.normalize(ip)
       return [] if normalized_ip.blank?
-      network ||= IpNormalizer.familiarity_network(normalized_ip)
+      public_ip = IpNormalizer.normalize_public(normalized_ip)
+      network ||= IpNormalizer.familiarity_network(public_ip) if public_ip.present?
 
       candidate_ids = Set.new
-      add_small_group_ids!(candidate_ids, UserNetwork.where(network_key: network), user.id) if network.present?
-      add_exact_ip_ids!(candidate_ids, :registration_ip_address, user.registration_ip_address, user.id)
-      add_exact_ip_ids!(candidate_ids, :ip_address, normalized_ip, user.id)
+      CoreIpEvidence.candidate_user_ids_for_ip(
+        normalized_ip,
+        current_user_id: user.id,
+        max_group_users: MAX_NETWORK_GROUP_USERS,
+      ).each { |id| candidate_ids << id }
+
+      if network.present?
+        add_small_group_ids!(candidate_ids, UserNetwork.where(network_key: network), user.id)
+      end
 
       if session_signature
         add_small_group_ids!(
@@ -45,7 +53,7 @@ module ::AccountSecurity
       []
     end
 
-    def recalculate_pair!(first_user_id, second_user_id, observed_at: nil, source: nil)
+    def recalculate_pair!(first_user_id, second_user_id, observed_at: nil, source: nil, precomputed_ip_details: nil, precomputed_supplemental: nil)
       return nil unless enabled?
 
       user_a_id, user_b_id = [first_user_id.to_i, second_user_id.to_i].sort
@@ -56,11 +64,18 @@ module ::AccountSecurity
       user_b = users[user_b_id]
       return nil if user_a.blank? || user_b.blank?
 
-      evidence = build_evidence(user_a, user_b)
-      score = AccountCorrelationPolicy.score(evidence)
+      evidence = build_evidence(
+        user_a,
+        user_b,
+        precomputed_ip_details: precomputed_ip_details,
+        precomputed_supplemental: precomputed_supplemental,
+      )
+      result = AccountCorrelationPolicy.score_with_breakdown(evidence)
+      score = result[:score]
+      evidence["score_breakdown"] = result[:breakdown]
       confidence = AccountCorrelationPolicy.confidence(score)
       existing = AccountCorrelation.find_by(user_a_id: user_a_id, user_b_id: user_b_id)
-      return nil if existing.blank? && !AccountCorrelationPolicy.candidate?(score)
+      return nil if existing.blank? && !AccountCorrelationPolicy.store_candidate?(score, evidence)
 
       now = observed_at || Time.zone.now
       correlation = existing || AccountCorrelation.new(
@@ -80,35 +95,81 @@ module ::AccountSecurity
       Statistics.increment!(correlation_candidates: 1) if created
       correlation
     rescue ActiveRecord::RecordNotUnique
-      recalculate_pair!(user_a_id, user_b_id, observed_at: observed_at, source: source)
+      recalculate_pair!(
+        user_a_id,
+        user_b_id,
+        observed_at: observed_at,
+        source: source,
+        precomputed_ip_details: precomputed_ip_details,
+        precomputed_supplemental: precomputed_supplemental,
+      )
     rescue StandardError => e
       Rails.logger.warn("[account_security] account correlation recalculation failed class=#{e.class}")
       nil
     end
 
-    def build_evidence(user_a, user_b)
-      shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
-      shared_signatures = shared_session_signatures(user_a.id, user_b.id, shared_networks)
-      registration_ip = shared_public_ip(user_a.registration_ip_address, user_b.registration_ip_address)
-      current_ip = shared_public_ip(user_a.ip_address, user_b.ip_address)
-      registration_ip = nil if registration_ip && trusted_ip?(registration_ip)
-      current_ip = nil if current_ip && trusted_ip?(current_ip)
+    def build_evidence(user_a, user_b, precomputed_ip_details: nil, precomputed_supplemental: nil)
+      exact_details =
+        if precomputed_ip_details.nil?
+          CoreIpEvidence.shared_details_for_pair(user_a.id, user_b.id)
+        else
+          Array(precomputed_ip_details)
+        end
 
-      network_counts = shared_networks.map { |network| distinct_users_on_network(network) }
-      registration_count = registration_ip ? User.human_users.where(registration_ip_address: registration_ip).count : 0
-      current_count = current_ip ? User.human_users.where(ip_address: current_ip).count : 0
-      max_shared_users = (network_counts + [registration_count, current_count]).max.to_i
+      if precomputed_supplemental.is_a?(Hash)
+        shared_networks = Array(precomputed_supplemental["shared_networks"]).map(&:to_s).uniq
+        shared_signature_count = precomputed_supplemental["shared_session_signature_count"].to_i
+        browser = {
+          count: precomputed_supplemental["browser_continuity_count"].to_i,
+          max_users: precomputed_supplemental["max_browser_continuity_users"].to_i,
+        }
+        max_network_users = precomputed_supplemental["max_shared_network_users"].to_i
+      else
+        shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
+        shared_signature_count = shared_session_signatures(user_a.id, user_b.id, shared_networks).length
+        browser = BrowserContinuityRecorder.shared_summary(user_a.id, user_b.id)
+        max_network_users = shared_networks.map { |network| distinct_users_on_network(network) }.max.to_i
+      end
+
+      registration_details = exact_details.select { |detail| both_source?(detail, "registration") }
+      current_details = exact_details.select { |detail| both_source?(detail, "current") }
+      history_details = exact_details.select { |detail| historical_source?(detail) }
+      public_details = exact_details.select { |detail| detail["public"] == true }
+      untrusted_public_details = public_details.reject { |detail| detail["trusted"] == true }
+      nonpublic_details = exact_details.reject { |detail| detail["public"] == true }
+      trusted_details = exact_details.select { |detail| detail["trusted"] == true }
+
+      exact_counts = exact_details.map { |detail| detail["user_count"].to_i }
       registration_delta = ((user_a.created_at - user_b.created_at).abs / 60).round
 
       {
-        "shared_registration_ip" => registration_ip.present?,
-        "same_current_ip" => current_ip.present?,
+        "shared_registration_ip" => registration_details.any?,
+        "shared_registration_ip_public" => registration_details.any? { |detail| detail["public"] == true && detail["trusted"] != true },
+        "shared_registration_ip_nonpublic" => registration_details.any? { |detail| detail["public"] != true },
+        "same_current_ip" => current_details.any?,
+        "same_current_ip_public" => current_details.any? { |detail| detail["public"] == true && detail["trusted"] != true },
+        "shared_exact_ip_count" => exact_details.length,
+        "shared_public_ip_count" => public_details.length,
+        "untrusted_public_ip_count" => untrusted_public_details.length,
+        "shared_nonpublic_ip_count" => nonpublic_details.length,
+        "shared_history_ip_count" => history_details.length,
+        "shared_auth_ip_count" => exact_details.count { |detail| auth_source?(detail) },
+        "trusted_shared_ip_count" => trusted_details.length,
+        "tor_shared_ip_count" => exact_details.count { |detail| detail["tor"] == true },
+        "hosting_shared_ip_count" => exact_details.count { |detail| detail["hosting"] == true },
+        "mobile_shared_ip_count" => exact_details.count { |detail| detail["mobile"] == true },
+        "local_blacklist_shared_ip_count" => exact_details.count { |detail| detail["local_blacklist"] == true },
+        "shared_ip_details" => exact_details.first(MAX_SHARED_IPS_IN_PAYLOAD),
         "shared_network_count" => shared_networks.length,
         "shared_networks" => shared_networks.first(MAX_SHARED_NETWORKS_IN_PAYLOAD),
-        "shared_session_signature_count" => shared_signatures.length,
+        "shared_session_signature_count" => shared_signature_count,
+        "browser_continuity_count" => browser[:count].to_i,
+        "max_browser_continuity_users" => browser[:max_users].to_i,
+        "browser_continuity_positive_only" => true,
         "registration_delta_minutes" => registration_delta,
-        "max_shared_network_users" => max_shared_users,
-        "large_shared_network" => max_shared_users >= 10,
+        "max_shared_network_users" => [max_network_users, exact_counts.max.to_i].max,
+        "max_shared_exact_ip_users" => exact_counts.max.to_i,
+        "large_shared_network" => [max_network_users, exact_counts.max.to_i].max >= 10,
         "raw_user_agent_stored" => false,
       }
     end
@@ -142,34 +203,28 @@ module ::AccountSecurity
       ids.each { |id| target << id if id.to_i > 0 && id != current_user_id }
     end
 
-    def add_exact_ip_ids!(target, column, value, current_user_id)
-      ip = IpNormalizer.normalize_public(value)
-      return if ip.blank? || trusted_ip?(ip)
-      ids = User.human_users.where(column => ip, staged: false).where.not(id: current_user_id).limit(MAX_NETWORK_GROUP_USERS + 1).pluck(:id)
-      return if ids.length > MAX_NETWORK_GROUP_USERS
-      ids.each { |id| target << id }
-    end
-
     def existing_other_user_ids(user_id)
       first = AccountCorrelation.where(user_a_id: user_id).limit(MAX_CANDIDATES_PER_OBSERVATION).pluck(:user_b_id)
       second = AccountCorrelation.where(user_b_id: user_id).limit(MAX_CANDIDATES_PER_OBSERVATION).pluck(:user_a_id)
       (first + second).uniq.first(MAX_CANDIDATES_PER_OBSERVATION)
     end
 
-    def shared_public_ip(first, second)
-      a = IpNormalizer.normalize_public(first)
-      b = IpNormalizer.normalize_public(second)
-      a.present? && a == b ? a : nil
+    def both_source?(detail, source)
+      Array(detail["sources_a"]).include?(source) && Array(detail["sources_b"]).include?(source)
+    end
+
+    def historical_source?(detail)
+      sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
+      (sources & %w[history auth_session active_session]).any?
+    end
+
+    def auth_source?(detail)
+      sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
+      (sources & %w[auth_session active_session]).any?
     end
 
     def trusted_network?(network)
       TrustedNetwork.active.where("?::inet <<= network", network.to_s).exists?
-    rescue ActiveRecord::StatementInvalid
-      false
-    end
-
-    def trusted_ip?(ip)
-      TrustedNetwork.active.where("?::inet <<= network", ip.to_s).exists?
     rescue ActiveRecord::StatementInvalid
       false
     end
