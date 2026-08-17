@@ -18,6 +18,7 @@ module Jobs
       delete_in_batches(::AccountSecurity::DailyStat.where("stat_date < ?", Date.current - SiteSetting.account_security_stats_retention_days.to_i.days))
       delete_in_batches(::AccountSecurity::TrustedNetwork.where("expires_at IS NOT NULL AND expires_at < ?", now - 180.days))
       delete_in_batches(::AccountSecurity::TemporaryIpBlock.where.not(released_at: nil).where("released_at < ?", now - 180.days))
+      delete_in_batches(::AccountSecurity::NotificationSuppression.where("expires_at < ?", now - 180.days))
     end
 
     private

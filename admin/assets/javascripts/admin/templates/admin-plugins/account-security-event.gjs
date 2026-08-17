@@ -193,6 +193,16 @@ export default RouteTemplate(
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.blacklist"}}</div><div class="as-page__value">{{@controller.event.context.local_blacklist_match}}</div></div>
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.usage_type"}}</div><div class="as-page__value">{{if @controller.event.context.usage_type @controller.event.context.usage_type "—"}}</div></div>
           <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.familiarity_network"}}</div><div class="as-page__value as-page__code">{{if @controller.event.context.familiarity_network @controller.event.context.familiarity_network "—"}}</div></div>
+          {{#if @controller.event.context.abuse_family}}
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.abuse_family"}}</div><div class="as-page__value">{{@controller.event.context.abuse_family}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.failure_count"}}</div><div class="as-page__value">{{@controller.event.context.failure_count}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.distinct_targets"}}</div><div class="as-page__value">{{if @controller.event.context.distinct_targets @controller.event.context.distinct_targets "—"}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.staff_targeted"}}</div><div class="as-page__value">{{@controller.event.context.staff_targeted}}</div></div>
+          {{/if}}
+          {{#if @controller.event.notified_at}}
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.notified_at"}}</div><div class="as-page__value">{{@controller.event.notified_at}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.notification_kind"}}</div><div class="as-page__value">{{@controller.event.notification_kind}}</div></div>
+          {{/if}}
         </div>
       </section>
 
@@ -228,6 +238,30 @@ export default RouteTemplate(
       </section>
 
       <section class="as-page__grid">
+        <div class="as-page__panel">
+          <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.notification_suppression_title"}}</h2><p class="as-page__muted">{{i18n "admin.account_security.event_detail.notification_suppression_description"}}</p></div>
+          {{#if @controller.notificationSuppressionActive}}
+            <div class="as-page__notice">{{i18n "admin.account_security.event_detail.notification_suppressed_until"}} {{@controller.data.notification_suppression.expires_at}}</div>
+            <button class="btn" type="button" disabled={{@controller.isWorking}} {{on "click" @controller.releaseNotificationSuppression}}>{{i18n "admin.account_security.event_detail.release_notification_suppression"}}</button>
+          {{else if @controller.canCreateNotificationSuppression}}
+            <div class="as-page__stack">
+              <div class="as-page__field">
+                <label>{{i18n "admin.account_security.event_detail.notification_suppression_duration"}}</label>
+                <select class="as-page__control" value={{@controller.suppressionDurationHours}} {{on "change" @controller.updateSuppressionDuration}}>
+                  <option value="24">1 day</option>
+                  <option value="168">7 days</option>
+                  <option value="720">30 days</option>
+                  <option value="2160">90 days</option>
+                </select>
+              </div>
+              <label class="as-page__checkbox"><input type="checkbox" checked={{@controller.confirmNotificationSuppression}} {{on "change" @controller.updateNotificationSuppressionConfirmation}} /><span>{{i18n "admin.account_security.event_detail.confirm_notification_suppression"}}</span></label>
+              <button class="btn" type="button" disabled={{@controller.isWorking}} {{on "click" @controller.createNotificationSuppression}}>{{i18n "admin.account_security.event_detail.create_notification_suppression"}}</button>
+            </div>
+          {{else}}
+            <p class="as-page__muted">{{i18n "admin.account_security.event_detail.notification_suppression_unavailable"}}</p>
+          {{/if}}
+        </div>
+
         <div class="as-page__panel">
           <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.user_note_title"}}</h2><p class="as-page__muted">{{i18n "admin.account_security.event_detail.user_note_description"}}</p></div>
           {{#if @controller.event.user_note_created_at}}

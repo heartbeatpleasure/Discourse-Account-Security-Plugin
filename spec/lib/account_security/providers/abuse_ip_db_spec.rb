@@ -33,4 +33,12 @@ RSpec.describe AccountSecurity::Providers::AbuseIpDb do
     expect(normalized).not_to have_key("reports")
     expect(normalized.to_json).not_to include("must not be retained")
   end
+
+  it "does not open the CHECK circuit when only the blacklist quota is exhausted" do
+    allow(AccountSecurity::CircuitBreaker).to receive(:open_until!)
+
+    client.send(:handle_failure_status, 429, { "retry-after" => "60" }, "blacklist")
+
+    expect(AccountSecurity::CircuitBreaker).not_to have_received(:open_until!)
+  end
 end

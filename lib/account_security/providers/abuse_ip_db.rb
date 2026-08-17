@@ -169,7 +169,7 @@ module ::AccountSecurity
       end
 
       def handle_failure_status(status, headers, endpoint)
-        if status == 429
+        if endpoint == "check" && status == 429
           retry_after = nonnegative_integer(headers["retry-after"])
           reset_epoch = nonnegative_integer(headers["x-ratelimit-reset"])
           until_time = [retry_after && Time.now + retry_after, reset_epoch && Time.at(reset_epoch)].compact.max

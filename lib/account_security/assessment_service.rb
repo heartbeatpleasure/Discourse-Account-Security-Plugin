@@ -4,16 +4,24 @@ module ::AccountSecurity
   class AssessmentService
     Result = Struct.new(:success, :reason, :intelligence, :event, :new_network, :source, keyword_init: true)
 
-    def self.call(ip:, user: nil, trigger:, force_remote: false, allow_remote: true)
-      new(ip: ip, user: user, trigger: trigger, force_remote: force_remote, allow_remote: allow_remote).call
+    def self.call(ip:, user: nil, trigger:, force_remote: false, allow_remote: true, event_context: {})
+      new(
+        ip: ip,
+        user: user,
+        trigger: trigger,
+        force_remote: force_remote,
+        allow_remote: allow_remote,
+        event_context: event_context,
+      ).call
     end
 
-    def initialize(ip:, user:, trigger:, force_remote:, allow_remote:)
+    def initialize(ip:, user:, trigger:, force_remote:, allow_remote:, event_context:)
       @ip = IpNormalizer.normalize_public(ip)
       @user = user
       @trigger = trigger.to_s
       @force_remote = force_remote == true
       @allow_remote = allow_remote == true
+      @event_context = event_context.is_a?(Hash) ? event_context : {}
     end
 
     def call
@@ -44,8 +52,15 @@ module ::AccountSecurity
           updated_at: Time.zone.now,
         )
         Statistics.increment!(cache_hits: 1)
-        event = EventRecorder.record!(user: @user, ip: @ip, intelligence: intelligence, trigger: @trigger,
-                                      new_network: familiarity[:new_network], familiarity_network: familiarity[:network])
+        event = EventRecorder.record!(
+          user: @user,
+          ip: @ip,
+          intelligence: intelligence,
+          trigger: @trigger,
+          new_network: familiarity[:new_network],
+          familiarity_network: familiarity[:network],
+          local_context: @event_context,
+        )
         return Result.new(success: true, intelligence: intelligence, event: event, new_network: familiarity[:new_network], source: "cache")
       end
 
@@ -58,8 +73,15 @@ module ::AccountSecurity
           blacklist_match: true,
           provider_checked_at: intelligence&.provider_checked_at,
         )
-        event = EventRecorder.record!(user: @user, ip: @ip, intelligence: intelligence, trigger: @trigger,
-                                      new_network: familiarity[:new_network], familiarity_network: familiarity[:network])
+        event = EventRecorder.record!(
+          user: @user,
+          ip: @ip,
+          intelligence: intelligence,
+          trigger: @trigger,
+          new_network: familiarity[:new_network],
+          familiarity_network: familiarity[:network],
+          local_context: @event_context,
+        )
         return Result.new(success: true, intelligence: intelligence, event: event, new_network: familiarity[:new_network], source: "local_blacklist")
       end
 
@@ -99,8 +121,15 @@ module ::AccountSecurity
 
       if provider_result == :cache_after_lock
         Statistics.increment!(cache_hits: 1)
-        event = EventRecorder.record!(user: @user, ip: @ip, intelligence: intelligence, trigger: @trigger,
-                                      new_network: familiarity[:new_network], familiarity_network: familiarity[:network])
+        event = EventRecorder.record!(
+          user: @user,
+          ip: @ip,
+          intelligence: intelligence,
+          trigger: @trigger,
+          new_network: familiarity[:new_network],
+          familiarity_network: familiarity[:network],
+          local_context: @event_context,
+        )
         return Result.new(success: true, intelligence: intelligence, event: event, new_network: familiarity[:new_network], source: "cache")
       end
 
@@ -119,8 +148,15 @@ module ::AccountSecurity
         blacklist_match: blacklist_entry.present?,
         provider_checked_at: Time.zone.now,
       )
-      event = EventRecorder.record!(user: @user, ip: @ip, intelligence: intelligence, trigger: @trigger,
-                                    new_network: familiarity[:new_network], familiarity_network: familiarity[:network])
+      event = EventRecorder.record!(
+        user: @user,
+        ip: @ip,
+        intelligence: intelligence,
+        trigger: @trigger,
+        new_network: familiarity[:new_network],
+        familiarity_network: familiarity[:network],
+        local_context: @event_context,
+      )
       Result.new(success: true, intelligence: intelligence, event: event, new_network: familiarity[:new_network], source: "abuseipdb")
     rescue StandardError => e
       Rails.logger.warn("[account_security] assessment failed trigger=#{@trigger.to_s.first(24)} class=#{e.class}")
@@ -142,6 +178,7 @@ module ::AccountSecurity
       when "registration" then "registration"
       when "staff_login" then "staff_login"
       when "manual" then "manual"
+      when "auth_failure", "registration_abuse" then "auth_failure"
       else "login"
       end
     end

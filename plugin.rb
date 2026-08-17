@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.2.1
+# version: 0.3.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.2.1"
+  PLUGIN_VERSION = "0.3.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -36,6 +36,7 @@ after_initialize do
     app/models/account_security/provider_report.rb
     app/models/account_security/daily_stat.rb
     app/models/account_security/temporary_ip_block.rb
+    app/models/account_security/notification_suppression.rb
     app/controllers/account_security/admin_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
@@ -50,14 +51,19 @@ after_initialize do
     lib/account_security/feeds/tor_exit_list.rb
     lib/account_security/feeds/abuse_ip_db_blacklist.rb
     lib/account_security/network_familiarity.rb
+    lib/account_security/authentication_abuse_tracker.rb
+    lib/account_security/authentication_tracking_hooks.rb
     lib/account_security/staff_audit.rb
     lib/account_security/user_note_writer.rb
     lib/account_security/temporary_ip_block_manager.rb
+    lib/account_security/notification_suppression_manager.rb
+    lib/account_security/incident_notifier.rb
     lib/account_security/event_recorder.rb
     lib/account_security/assessment_service.rb
     lib/account_security/health.rb
     lib/account_security/abuse_reporter.rb
     app/jobs/regular/account_security_check_ip.rb
+    app/jobs/regular/account_security_process_auth_abuse_cluster.rb
     app/jobs/scheduled/account_security_sync_tor_exit_list.rb
     app/jobs/scheduled/account_security_sync_abuseipdb_blacklist.rb
     app/jobs/scheduled/account_security_expire_temporary_ip_blocks.rb
@@ -66,6 +72,11 @@ after_initialize do
   ].each { |path| require_relative path }
 
   register_problem_check ProblemCheck::AccountSecurityOperationalHealth
+
+  require_dependency "session_controller"
+  require_dependency "users_controller"
+  SessionController.prepend(::AccountSecurity::SessionControllerTracking) unless SessionController < ::AccountSecurity::SessionControllerTracking
+  UsersController.prepend(::AccountSecurity::UsersControllerRegistrationTracking) unless UsersController < ::AccountSecurity::UsersControllerRegistrationTracking
 
   on(:user_created) do |user|
     next unless SiteSetting.account_security_enabled
@@ -111,6 +122,8 @@ after_initialize do
     ::AccountSecurity::RiskEvent.where(user_id: user.id).update_all(user_id: nil)
     ::AccountSecurity::RiskEvent.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
     ::AccountSecurity::TemporaryIpBlock.where(created_by_id: user.id).update_all(created_by_id: nil)
+    ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
+    ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
   end
 
   on(:user_anonymized) do |args|
@@ -119,6 +132,7 @@ after_initialize do
     next unless user && opts&.key?(:anonymize_ip)
 
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
+    ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
   end
 
   Discourse::Application.routes.append do
@@ -151,6 +165,10 @@ after_initialize do
          defaults: { format: :json }, constraints: AdminConstraint.new
     delete "/admin/plugins/account-security/events/:id/temporary-block.json" => "account_security/admin#release_temporary_block",
            defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/events/:id/notification-suppression.json" => "account_security/admin#create_notification_suppression",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    delete "/admin/plugins/account-security/events/:id/notification-suppression.json" => "account_security/admin#release_notification_suppression",
+           defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/lookup.json" => "account_security/admin#lookup",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/trusted-networks.json" => "account_security/admin#trusted_networks",
@@ -164,6 +182,8 @@ after_initialize do
     post "/admin/plugins/account-security/health/test.json" => "account_security/admin#health_test",
          defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/health/reset-circuit.json" => "account_security/admin#reset_circuit",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/health/sync-feed.json" => "account_security/admin#sync_feed",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/statistics.json" => "account_security/admin#statistics",
         defaults: { format: :json }, constraints: AdminConstraint.new

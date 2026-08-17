@@ -3,7 +3,7 @@ module ::AccountSecurity
   module Statistics
     module_function
 
-    COUNTERS = %i[assessments registrations logins manual_lookups provider_calls cache_hits local_blacklist_hits tor_hits quota_skips provider_errors events_created].freeze
+    COUNTERS = %i[assessments registrations logins manual_lookups auth_abuse_clusters provider_calls cache_hits local_blacklist_hits tor_hits quota_skips provider_errors events_created notifications_sent].freeze
 
     def increment!(values = {})
       safe = COUNTERS.index_with { |key| [values[key].to_i, 0].max }

@@ -28,6 +28,45 @@ plugins:
     default: true
     client: false
 
+  account_security_auth_abuse_detection_enabled:
+    default: true
+    client: false
+
+  account_security_failed_login_threshold:
+    default: 10
+    type: integer
+    min: 3
+    max: 1000
+    client: false
+
+  account_security_failed_login_single_account_threshold:
+    default: 6
+    type: integer
+    min: 3
+    max: 1000
+    client: false
+
+  account_security_login_code_failure_threshold:
+    default: 10
+    type: integer
+    min: 3
+    max: 1000
+    client: false
+
+  account_security_password_reset_threshold:
+    default: 12
+    type: integer
+    min: 3
+    max: 1000
+    client: false
+
+  account_security_rejected_registration_threshold:
+    default: 10
+    type: integer
+    min: 3
+    max: 1000
+    client: false
+
   account_security_blacklist_sync_enabled:
     default: true
     client: false
@@ -48,6 +87,21 @@ plugins:
     default: false
     client: false
 
+  account_security_staff_notifications_enabled:
+    default: false
+    client: false
+
+  account_security_notification_groups:
+    default: ""
+    type: group_list
+    list_type: compact
+    allow_any: false
+    client: false
+
+  account_security_notification_include_ip:
+    default: false
+    client: false
+
   account_security_daily_check_budget:
     default: 1000
     type: integer
@@ -63,6 +117,13 @@ plugins:
     client: false
 
   account_security_staff_reserve:
+    default: 100
+    type: integer
+    min: 0
+    max: 10000
+    client: false
+
+  account_security_auth_failure_reserve:
     default: 100
     type: integer
     min: 0

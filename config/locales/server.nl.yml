@@ -6,14 +6,24 @@ nl:
     account_security_abuseipdb_max_age_days: "Maximale ouderdom van meldingen die via AbuseIPDB CHECK worden meegenomen."
     account_security_registration_checks_enabled: "Publieke registratie-IP-adressen na accountaanmaak beoordelen."
     account_security_login_checks_enabled: "Publieke IP-adressen na succesvolle login beoordelen."
+    account_security_auth_abuse_detection_enabled: "Mislukte logins, ongeldige logincodes, wachtwoordresetverzoeken en afgewezen registraties lokaal clusteren. Counters staan tijdelijk in Redis en providerchecks vinden pas plaats nadat een ingestelde drempel is overschreden."
+    account_security_failed_login_threshold: "Aantal mislukte logins vanaf één publiek IP over verschillende gebruikersnamen binnen 10 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden."
+    account_security_failed_login_single_account_threshold: "Aantal mislukte logins vanaf één publiek IP tegen hetzelfde account binnen 10 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden."
+    account_security_login_code_failure_threshold: "Aantal ongeldige logincodepogingen vanaf één publiek IP binnen 15 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden."
+    account_security_password_reset_threshold: "Aantal wachtwoordresetverzoeken vanaf één publiek IP binnen 60 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden. Ook door Discourse rate limits geweigerde verzoeken tellen als lokale abuse-telemetrie."
+    account_security_rejected_registration_threshold: "Aantal door core-validatie afgewezen registratiepogingen vanaf één publiek IP binnen 30 minuten voordat één registratie-abusebeoordeling mag plaatsvinden."
     account_security_blacklist_sync_enabled: "De AbuseIPDB high-confidence blacklist lokaal vier keer per dag synchroniseren."
     account_security_tor_feed_enabled: "De officiële Tor-exitlijst elk uur lokaal synchroniseren. Tor is alleen context en verhoogt zelfstandig nooit het risico."
-    account_security_abuse_reporting_enabled: "Sta provider-rapportage alleen toe voor een lokaal gecorreleerd authenticatiemisbruik-event waarvan de drempel aantoonbaar is overschreden. Standaard UIT. De plugin maakt nog niet automatisch bevestigde authenticatiemisbruikclusters aan, dus alleen deze setting inschakelen kan geen rapport versturen."
+    account_security_abuse_reporting_enabled: "Sta handmatige provider-rapportage alleen toe voor lokaal bevestigd authenticatiemisbruik waarvan de drempel is overschreden en dat tevens door een High/Critical providersignaal wordt bevestigd. Standaard UIT; er wordt nooit automatisch gerapporteerd."
     account_security_user_notes_enabled: "Voeg één beknopte User Note toe bij een geëscaleerd High/Critical-event wanneer de Discourse User Notes-plugin beschikbaar is. Standaard UIT. De notitie bevat geen ruw IP-adres of providerscore."
     account_security_temporary_ip_blocks_enabled: "Sta beheerders toe om vanuit geschikte High/Critical-events expliciete tijdelijke Discourse IP-blokkades aan te maken. Standaard UIT. Account Security neemt nooit een bestaande screeningregel over."
+    account_security_staff_notifications_enabled: "Stuur per kwalificerend incident één privébericht vanuit het systeemaccount naar de ingestelde staffgroepen. Standaard UIT."
+    account_security_notification_groups: "Groepen die Account Security-incidentberichten ontvangen wanneer staffnotificaties zijn ingeschakeld."
+    account_security_notification_include_ip: "Neem het exacte IP-adres op in incidentberichten. Standaard UIT; de eventdetailpagina blijft de aangewezen plaats om het IP te bekijken."
     account_security_daily_check_budget: "Lokale veiligheidslimiet voor AbuseIPDB CHECK-verzoeken per UTC-dag."
     account_security_registration_reserve: "Gereserveerde checks voor nieuwe registraties."
     account_security_staff_reserve: "Gereserveerde checks voor nieuwe staff/admin-netwerken."
+    account_security_auth_failure_reserve: "Gereserveerde checks voor lokaal gedrempelde authenticatiemisbruikclusters voordat normale loginverrijking deze capaciteit kan gebruiken."
     account_security_manual_reserve: "Gereserveerde checks voor handmatige beheerder-lookups."
     account_security_ipv6_familiarity_prefix: "IPv6-prefix voor lokale netwerkherkenning per gebruiker."
     account_security_user_network_retention_days: "Bewaartermijn voor compacte gebruiker-netwerkrelaties."
@@ -26,6 +36,10 @@ nl:
     account_security_circuit_breaker_window_minutes: "Tijdsvenster voor circuit-breaker fouten."
     account_security_circuit_breaker_open_minutes: "Hoe lang providerverkeer wordt gepauzeerd als het circuit opent."
 
+  dashboard:
+    problem:
+      account_security_operational_health: "Account Security is gedegradeerd (%{status}; %{reason}). <a href='%{base_path}/admin/plugins/account-security-health'>Open Account Security Health</a>."
+
   admin:
     account_security:
       trusted:
@@ -35,7 +49,43 @@ nl:
         user_note_unavailable: "Voor dit event kan geen User Note worden aangemaakt."
         existing_ip_screening: "Voor dit adres geldt al een Discourse IP-screeningregel. Account Security vervangt deze niet en neemt deze niet over."
         temporary_block_not_eligible: "Dit event voldoet niet aan de veiligheidsvoorwaarden voor een tijdelijke IP-blokkade."
+        notification_suppression_not_eligible: "Notificatieonderdrukking is voor dit event niet beschikbaar omdat geen gebruiker-netwerkpaar beschikbaar is of er geen actieve onderdrukking bestaat."
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} is geëscaleerd voor staffbeoordeling met ernst %{severity}. Dit securitysignaal stelt op zichzelf geen misbruik door het account vast."
+    notification:
+      title: "Account Security: %{severity}-incident"
+      no_user: "Geen afzonderlijk account"
+      severities:
+        elevated: "Verhoogd"
+        high: "Hoog"
+        critical: "Kritiek"
+      event_types:
+        registration: "Registratie"
+        login_new_network: "Login vanaf een nieuw netwerk"
+        staff_login_new_network: "Staff/admin-login vanaf een nieuw netwerk"
+        auth_failure_cluster: "Cluster van mislukte authenticaties"
+        registration_abuse_cluster: "Cluster van afgewezen registraties"
+      context:
+        tor: "Tor-exit"
+        local_blacklist: "lokale high-confidence blacklist"
+        staff_targeted: "staff/admin-account als doelwit"
+        unavailable: "niet beschikbaar"
+      kinds:
+        critical_registration: "Kritiek registratiesignaal"
+        staff_new_network: "Hoog-risico nieuw staff/admin-netwerk"
+        auth_abuse_cluster: "Gecorreleerd authenticatiemisbruikcluster"
+        repeated_high_networks: "Herhaalde hoog-risiconetwerken voor één account"
+      body: |-
+        Account Security heeft een incident gedetecteerd dat voldoet aan de ingestelde notificatiedrempel voor staff.
+
+        - Trigger: %{kind}
+        - Ernst: %{severity}
+        - Eventtype: %{event_type}
+        - Gebruiker: %{user}
+        - Netwerkcontext: %{network_context}%{ip_line}
+
+        Bekijk alle interne evidence en context: %{event_url}
+
+        Dit securitysignaal stelt op zichzelf geen misbruik door het account vast. Er is niet automatisch gemodereerd of geblokkeerd.
 

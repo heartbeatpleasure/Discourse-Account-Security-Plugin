@@ -10,6 +10,8 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
   @tracked durationMinutes = 1440;
   @tracked confirmTemporaryBlock = false;
   @tracked confirmAbuseReport = false;
+  @tracked suppressionDurationHours = 168;
+  @tracked confirmNotificationSuppression = false;
   @tracked isWorking = false;
 
   resetState(model) {
@@ -18,6 +20,8 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
     this.durationMinutes = 1440;
     this.confirmTemporaryBlock = false;
     this.confirmAbuseReport = false;
+    this.suppressionDurationHours = 168;
+    this.confirmNotificationSuppression = false;
     this.isWorking = false;
   }
 
@@ -27,6 +31,17 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
 
   get temporaryBlockActive() {
     return this.data?.temporary_block?.active === true;
+  }
+
+  get notificationSuppressionActive() {
+    return this.data?.notification_suppression?.active === true;
+  }
+
+  get canCreateNotificationSuppression() {
+    return (
+      this.data?.capabilities?.notification_suppression_eligible === true &&
+      !this.notificationSuppressionActive
+    );
   }
 
   get canCreateTemporaryBlock() {
@@ -52,6 +67,16 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
   @action
   updateDuration(event) {
     this.durationMinutes = Number(event.target.value);
+  }
+
+  @action
+  updateSuppressionDuration(event) {
+    this.suppressionDurationHours = Number(event.target.value);
+  }
+
+  @action
+  updateNotificationSuppressionConfirmation(event) {
+    this.confirmNotificationSuppression = event.target.checked;
   }
 
   @action
@@ -127,6 +152,39 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
     await this.perform(async () => {
       await ajax(
         `/admin/plugins/account-security/events/${this.event.id}/temporary-block.json`,
+        { type: "DELETE" }
+      );
+      await this.reloadData();
+    });
+  }
+
+  @action
+  async createNotificationSuppression() {
+    if (!this.confirmNotificationSuppression) {
+      return;
+    }
+
+    await this.perform(async () => {
+      await ajax(
+        `/admin/plugins/account-security/events/${this.event.id}/notification-suppression.json`,
+        {
+          type: "POST",
+          data: {
+            confirmed: true,
+            duration_hours: this.suppressionDurationHours,
+          },
+        }
+      );
+      this.confirmNotificationSuppression = false;
+      await this.reloadData();
+    });
+  }
+
+  @action
+  async releaseNotificationSuppression() {
+    await this.perform(async () => {
+      await ajax(
+        `/admin/plugins/account-security/events/${this.event.id}/notification-suppression.json`,
         { type: "DELETE" }
       );
       await this.reloadData();

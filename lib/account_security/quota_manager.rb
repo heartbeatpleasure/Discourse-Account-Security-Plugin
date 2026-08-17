@@ -3,7 +3,7 @@ module ::AccountSecurity
   module QuotaManager
     module_function
 
-    BUCKETS = %w[registration staff_login manual login deferred].freeze
+    BUCKETS = %w[registration staff_login auth_failure manual login deferred].freeze
 
     Decision = Struct.new(:allowed, :reason, keyword_init: true)
 
@@ -83,12 +83,14 @@ module ::AccountSecurity
     def protected_capacity(bucket, counts)
       reg_remaining = [SiteSetting.account_security_registration_reserve.to_i - counts["registration"].to_i, 0].max
       staff_remaining = [SiteSetting.account_security_staff_reserve.to_i - counts["staff_login"].to_i, 0].max
+      auth_remaining = [SiteSetting.account_security_auth_failure_reserve.to_i - counts["auth_failure"].to_i, 0].max
       manual_remaining = [SiteSetting.account_security_manual_reserve.to_i - counts["manual"].to_i, 0].max
       case bucket
       when "manual" then 0
       when "staff_login" then manual_remaining
       when "registration" then manual_remaining + staff_remaining
-      else manual_remaining + staff_remaining + reg_remaining
+      when "auth_failure" then manual_remaining + staff_remaining + reg_remaining
+      else manual_remaining + staff_remaining + reg_remaining + auth_remaining
       end
     end
 

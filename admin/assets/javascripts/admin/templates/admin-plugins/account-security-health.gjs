@@ -184,12 +184,18 @@ export default RouteTemplate(
           <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.health.circuit"}}</div><div class="as-page__value">{{@controller.data.circuit_breaker.state}}</div></div>
         </section>
 
+        {{#if @controller.overallReasonText}}
+          <div class="as-page__warning"><strong>{{i18n "admin.account_security.health.reason"}}:</strong> {{@controller.overallReasonText}}</div>
+        {{/if}}
+
         <section class="as-page__grid">
           <div class="as-page__panel">
             <div class="as-page__section-title"><h2>{{i18n "admin.account_security.health.configuration"}}</h2></div>
             <div class="as-page__stack">
               <div><strong>{{i18n "admin.account_security.health.api_key"}}:</strong> {{@controller.data.configuration.api_key_configured}}</div>
               <div><strong>{{i18n "admin.account_security.health.reporting"}}:</strong> {{@controller.data.configuration.abuse_reporting_enabled}}</div>
+              <div><strong>{{i18n "admin.account_security.health.auth_abuse_detection"}}:</strong> {{@controller.data.configuration.auth_abuse_detection_enabled}}</div>
+              <div><strong>{{i18n "admin.account_security.health.staff_notifications"}}:</strong> {{@controller.data.configuration.staff_notifications_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.user_notes"}}:</strong> {{@controller.data.configuration.user_notes_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.temporary_blocks"}}:</strong> {{@controller.data.configuration.temporary_ip_blocks_enabled}}</div>
             </div>
@@ -199,6 +205,14 @@ export default RouteTemplate(
             <div class="as-page__stack">
               <div><strong>Tor:</strong> {{@controller.data.feeds.tor.status}} / {{@controller.data.feeds.tor.entry_count}}</div>
               <div><strong>AbuseIPDB blacklist:</strong> {{@controller.data.feeds.abuseipdb_blacklist.status}} / {{@controller.data.feeds.abuseipdb_blacklist.entry_count}}</div>
+              <div class="as-page__buttons">
+                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncTorFeed}}>{{i18n "admin.account_security.health.sync_tor"}}</button>
+                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncBlacklistFeed}}>{{i18n "admin.account_security.health.sync_blacklist"}}</button>
+              </div>
+              <p class="as-page__hint">{{i18n "admin.account_security.health.sync_blacklist_hint"}}</p>
+              {{#if @controller.data.feed_sync}}
+                <div class="as-page__notice"><strong>{{i18n "admin.account_security.health.feed_sync_result"}}:</strong> {{@controller.data.feed_sync.source}} / {{@controller.data.feed_sync.success}} {{if @controller.data.feed_sync.error_code @controller.data.feed_sync.error_code ""}}</div>
+              {{/if}}
             </div>
           </div>
           <div class="as-page__panel">

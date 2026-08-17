@@ -13,6 +13,9 @@ module ::AccountSecurity
       trusted_network_created
       trusted_network_deleted
       circuit_reset
+      feed_synced
+      notification_suppression_created
+      notification_suppression_released
       abuse_reported
     ].freeze
 
@@ -23,6 +26,9 @@ module ::AccountSecurity
       temporary_block_id
       duration_minutes
       report_id
+      notification_suppression_id
+      duration_hours
+      feed
       result
     ].freeze
 

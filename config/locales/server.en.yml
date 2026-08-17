@@ -6,14 +6,24 @@ en:
     account_security_abuseipdb_max_age_days: "Maximum report age requested from AbuseIPDB CHECK. Normal operation does not request verbose report comments."
     account_security_registration_checks_enabled: "Assess public registration IP addresses after account creation."
     account_security_login_checks_enabled: "Assess public IP addresses after successful login, prioritizing newly observed networks."
+    account_security_auth_abuse_detection_enabled: "Locally aggregate failed logins, invalid login codes, password-reset requests and rejected registrations. Counters live in Redis and expire automatically; provider checks occur only after a configured threshold is crossed."
+    account_security_failed_login_threshold: "Failed login attempts from one public IP across usernames within 10 minutes before one abuse-cluster assessment is eligible."
+    account_security_failed_login_single_account_threshold: "Failed login attempts from one public IP against the same account within 10 minutes before one abuse-cluster assessment is eligible."
+    account_security_login_code_failure_threshold: "Invalid login-code attempts from one public IP within 15 minutes before one abuse-cluster assessment is eligible."
+    account_security_password_reset_threshold: "Password-reset requests from one public IP within 60 minutes before one abuse-cluster assessment is eligible. Requests rejected by Discourse rate limits are still local abuse telemetry."
+    account_security_rejected_registration_threshold: "Registration attempts rejected by core validation from one public IP within 30 minutes before one registration-abuse assessment is eligible."
     account_security_blacklist_sync_enabled: "Synchronize the AbuseIPDB high-confidence blacklist locally four times per day."
     account_security_tor_feed_enabled: "Synchronize the official Tor exit list locally once per hour. Tor is context only and never raises risk by itself."
-    account_security_abuse_reporting_enabled: "Permit provider reporting only for a locally corroborated, threshold-exceeded authentication-abuse event. OFF by default. The plugin does not automatically create confirmed authentication-abuse clusters yet, so enabling this setting alone cannot send a report."
+    account_security_abuse_reporting_enabled: "Permit manual provider reporting only for a locally confirmed, threshold-exceeded authentication-abuse event that is also corroborated by a High/Critical provider signal. OFF by default; no report is sent automatically."
     account_security_user_notes_enabled: "Add one concise User Note for a High/Critical escalated event when the Discourse User Notes plugin is available. OFF by default. Notes omit the raw IP address and provider score."
     account_security_temporary_ip_blocks_enabled: "Allow administrators to create explicit, time-limited Discourse IP blocks from eligible High/Critical events. OFF by default. Account Security never takes ownership of an existing screening rule."
+    account_security_staff_notifications_enabled: "Send one incident-based private message from the system account to the configured staff groups for qualifying escalations. OFF by default."
+    account_security_notification_groups: "Groups that receive Account Security incident private messages when staff notifications are enabled."
+    account_security_notification_include_ip: "Include the exact IP address in incident private messages. OFF by default; the event detail page remains the authoritative place to view the IP."
     account_security_daily_check_budget: "Local safety budget for AbuseIPDB CHECK requests per UTC day. Provider rate-limit headers remain authoritative."
     account_security_registration_reserve: "Checks protected for new registrations before normal-user login enrichment may consume them."
     account_security_staff_reserve: "Checks protected for new staff/admin login networks."
+    account_security_auth_failure_reserve: "Checks protected for locally thresholded authentication-abuse clusters before normal-user login enrichment may consume them."
     account_security_manual_reserve: "Checks protected for explicit administrator lookups."
     account_security_ipv6_familiarity_prefix: "IPv6 prefix used only for per-user network familiarity. Provider checks still use the exact IPv6 address."
     account_security_user_network_retention_days: "Days to retain compact user-to-network familiarity records."
@@ -39,7 +49,43 @@ en:
         user_note_unavailable: "A User Note cannot be created for this event."
         existing_ip_screening: "A Discourse IP screening rule already applies to this address. Account Security will not replace or take ownership of it."
         temporary_block_not_eligible: "This event does not meet the safety requirements for a temporary IP block."
+        notification_suppression_not_eligible: "Notification suppression is unavailable for this event because no user/network pair is available or no active suppression exists."
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} was escalated for staff review with %{severity} severity. This security signal does not by itself establish account misconduct."
+    notification:
+      title: "Account Security: %{severity} incident"
+      no_user: "No single account"
+      severities:
+        elevated: "Elevated"
+        high: "High"
+        critical: "Critical"
+      event_types:
+        registration: "Registration"
+        login_new_network: "Login from a new network"
+        staff_login_new_network: "Staff/admin login from a new network"
+        auth_failure_cluster: "Failed-authentication cluster"
+        registration_abuse_cluster: "Rejected-registration cluster"
+      context:
+        tor: "Tor exit"
+        local_blacklist: "local high-confidence blacklist"
+        staff_targeted: "staff/admin account targeted"
+        unavailable: "not available"
+      kinds:
+        critical_registration: "Critical registration signal"
+        staff_new_network: "High-risk new staff/admin network"
+        auth_abuse_cluster: "Corroborated authentication-abuse cluster"
+        repeated_high_networks: "Repeated high-risk networks for one account"
+      body: |-
+        Account Security detected an incident that meets the configured staff-notification threshold.
+
+        - Trigger: %{kind}
+        - Severity: %{severity}
+        - Event type: %{event_type}
+        - User: %{user}
+        - Network context: %{network_context}%{ip_line}
+
+        Review the full internal evidence and context: %{event_url}
+
+        This security signal does not by itself establish account misconduct. No moderation or blocking action was performed automatically.
 

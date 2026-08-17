@@ -73,13 +73,21 @@ module ::AccountSecurity
       )
 
       if result.intelligence
+        refreshed_evidence =
+          if event.event_type.in?(%w[auth_failure_cluster registration_abuse_cluster])
+            trigger = event.event_type == "registration_abuse_cluster" ? "registration_abuse" : "auth_failure"
+            EventRecorder.event_evidence_strength(result.intelligence, trigger, event.context || {})
+          else
+            result.intelligence.evidence_strength
+          end
         event.update!(
           risk_level: result.intelligence.risk_level,
           severity: EventRecorder.severity_for(result.intelligence.risk_level),
-          evidence_strength: result.intelligence.evidence_strength,
+          evidence_strength: refreshed_evidence,
           ip_intelligence_id: result.intelligence.id,
           last_seen_at: Time.zone.now,
         )
+        IncidentNotifier.notify_if_needed!(event)
       end
 
       StaffAudit.log!(actor: current_user, action: "event_refreshed", details: { event_id: event.id, result: result.source || result.reason })
@@ -123,6 +131,29 @@ module ::AccountSecurity
       event = find_event!
       block = TemporaryIpBlockManager.release_for_event!(event: event, actor: current_user)
       render_json_dump(success: true, temporary_block: serialize_temporary_block(block.reload))
+    end
+
+    def create_notification_suppression
+      rate_limit!("notification-suppression-create", 10)
+      require_confirmation!
+      event = find_event!
+      suppression = NotificationSuppressionManager.create!(
+        event: event,
+        actor: current_user,
+        duration_hours: params.require(:duration_hours),
+      )
+      render_json_dump(success: true, notification_suppression: serialize_notification_suppression(suppression))
+    rescue NotificationSuppressionManager::NotEligible
+      render_json_error(I18n.t("admin.account_security.events.notification_suppression_not_eligible"), status: :unprocessable_entity)
+    end
+
+    def release_notification_suppression
+      rate_limit!("notification-suppression-release", 10)
+      event = find_event!
+      suppression = NotificationSuppressionManager.release!(event: event, actor: current_user)
+      render_json_dump(success: true, notification_suppression: serialize_notification_suppression(suppression))
+    rescue NotificationSuppressionManager::NotEligible
+      render_json_error(I18n.t("admin.account_security.events.notification_suppression_not_eligible"), status: :unprocessable_entity)
     end
 
     def lookup
@@ -188,6 +219,26 @@ module ::AccountSecurity
       CircuitBreaker.reset!
       StaffAudit.log!(actor: current_user, action: "circuit_reset")
       render_json_dump(success: true, circuit_breaker: CircuitBreaker.state)
+    end
+
+    def sync_feed
+      source = params.require(:source).to_s
+      case source
+      when "tor"
+        rate_limit!("sync-tor-feed", 4, 1.hour)
+      when "abuseipdb_blacklist"
+        rate_limit!("sync-blacklist-feed", 2, 1.day)
+      else
+        raise Discourse::InvalidParameters.new(:source)
+      end
+
+      result = Health.sync_feed!(source)
+      StaffAudit.log!(
+        actor: current_user,
+        action: "feed_synced",
+        details: { feed: source, result: result.dig(:feed_sync, :success) == true ? "success" : "failed" },
+      )
+      render_json_dump(result)
     end
 
     def statistics
@@ -261,10 +312,12 @@ module ::AccountSecurity
     def event_detail_payload(event)
       report = ProviderReport.find_by(risk_event_id: event.id)
       temporary_block = TemporaryIpBlock.unreleased.where(risk_event_id: event.id).order(id: :desc).first
+      notification_suppression = NotificationSuppressionManager.active_for(event)
       {
         event: serialize_event(event, detail: true),
         intelligence: serialize_intelligence(event.ip_intelligence),
         temporary_block: serialize_temporary_block(temporary_block),
+        notification_suppression: serialize_notification_suppression(notification_suppression),
         provider_report: report && {
           id: report.id,
           status: report.status,
@@ -276,10 +329,16 @@ module ::AccountSecurity
           user_note_available: UserNoteWriter.eligible?(event),
           temporary_ip_blocks_enabled: SiteSetting.account_security_temporary_ip_blocks_enabled,
           temporary_block_eligible: TemporaryIpBlockManager.eligible_event?(event),
+          staff_notifications_enabled: SiteSetting.account_security_staff_notifications_enabled,
+          notification_suppression_eligible:
+            SiteSetting.account_security_staff_notifications_enabled &&
+              event.user_id.present? &&
+              NotificationSuppressionManager.network_key(event).present?,
           abuse_reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
           abuse_reportable: AbuseReporter.reportable_event?(event),
         },
         temporary_block_durations: TemporaryIpBlockManager::ALLOWED_DURATIONS,
+        notification_suppression_durations: NotificationSuppressionManager::ALLOWED_HOURS,
       }
     end
 
@@ -298,6 +357,8 @@ module ::AccountSecurity
         reviewed_at: event.reviewed_at&.iso8601,
         resolution_reason: event.resolution_reason,
         user_note_created_at: event.user_note_created_at&.iso8601,
+        notified_at: event.notified_at&.iso8601,
+        notification_kind: event.notification_kind,
         context: event.context,
         user: event.user && { id: event.user.id, username: event.user.username },
         reviewed_by: event.reviewed_by && { id: event.reviewed_by.id, username: event.reviewed_by.username },
@@ -336,6 +397,16 @@ module ::AccountSecurity
         released_at: block.released_at&.iso8601,
         release_reason: block.release_reason,
         active: block.released_at.blank? && block.expires_at.present? && block.expires_at > Time.zone.now,
+      }
+    end
+
+    def serialize_notification_suppression(record)
+      return nil unless record
+      {
+        id: record.id,
+        network_key: record.network_key,
+        expires_at: record.expires_at&.iso8601,
+        active: record.expires_at.present? && record.expires_at > Time.zone.now,
       }
     end
 

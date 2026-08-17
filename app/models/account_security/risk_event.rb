@@ -5,7 +5,7 @@ module ::AccountSecurity
     self.table_name = "account_security_risk_events"
 
     STATUSES = %w[open acknowledged benign monitor actioned auto_resolved].freeze
-    EVENT_TYPES = %w[registration login_new_network login_familiar staff_login_new_network manual_lookup auth_failure_cluster other].freeze
+    EVENT_TYPES = %w[registration login_new_network login_familiar staff_login_new_network manual_lookup auth_failure_cluster registration_abuse_cluster other].freeze
     SEVERITIES = %w[elevated high critical].freeze
 
     belongs_to :user, optional: true

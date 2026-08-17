@@ -30,6 +30,8 @@ module ::AccountSecurity
     end
 
     def event_required?(trigger:, risk_level:, new_network:, staff:)
+      return true if trigger.in?(%w[auth_failure registration_abuse])
+
       rank = ::AccountSecurity::IpIntelligence::RISK_LEVELS.index(risk_level.to_s) || 0
       return rank >= 2 if trigger == "registration"
       return rank >= 2 if staff && new_network

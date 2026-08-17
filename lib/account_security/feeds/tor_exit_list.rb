@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 require "digest"
 require "net/http"
 require "openssl"
@@ -8,20 +9,28 @@ module ::AccountSecurity
   module Feeds
     module TorExitList
       module_function
+
       URI_ENDPOINT = URI("https://check.torproject.org/torbulkexitlist")
       MAX_BYTES = 2 * 1024 * 1024
+      MUTEX_KEY = "account-security-feed-sync-tor"
 
       def sync!
-        response, body = fetch
-        raise "unexpected_status" unless response.code.to_i == 200
-        ips = body.lines.filter_map { |line| IpNormalizer.normalize_public(line.strip) }.uniq
-        raise "implausible_feed" if ips.length < 20 || ips.length > 20_000
-        replace!(ips)
-        { success: true, entry_count: ips.length }
+        DistributedMutex.synchronize(MUTEX_KEY, validity: 30) { sync_locked! }
       rescue StandardError => e
         mark_failure!(e.class.to_s)
         Rails.logger.warn("[account_security] Tor feed sync failed class=#{e.class}")
         { success: false, error: "tor_sync_failed" }
+      end
+
+      def sync_locked!
+        response, body = fetch
+        raise "unexpected_status" unless response.code.to_i == 200
+
+        ips = body.lines.filter_map { |line| IpNormalizer.normalize_public(line.strip) }.uniq
+        raise "implausible_feed" if ips.length < 20 || ips.length > 20_000
+
+        replace!(ips)
+        { success: true, entry_count: ips.length }
       end
 
       def replace!(ips)
@@ -29,7 +38,15 @@ module ::AccountSecurity
         now = Time.zone.now
         checksum = Digest::SHA256.hexdigest(ips.sort.join("\n"))
         FeedEntry.transaction do
-          rows = ips.map { |ip| { source: "tor", ip_address: ip, generation: generation, created_at: now, updated_at: now } }
+          rows = ips.map do |ip|
+            {
+              source: "tor",
+              ip_address: ip,
+              generation: generation,
+              created_at: now,
+              updated_at: now,
+            }
+          end
           rows.each_slice(1000) { |slice| FeedEntry.upsert_all(slice, unique_by: :idx_as_feed_source_ip) }
           FeedEntry.where(source: "tor").where.not(generation: generation).delete_all
           snapshot = FeedSnapshot.find_or_initialize_by(source: "tor")
