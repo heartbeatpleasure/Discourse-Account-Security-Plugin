@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.1.0
+# version: 0.2.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.1.0"
+  PLUGIN_VERSION = "0.2.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -35,6 +35,7 @@ after_initialize do
     app/models/account_security/feed_snapshot.rb
     app/models/account_security/provider_report.rb
     app/models/account_security/daily_stat.rb
+    app/models/account_security/temporary_ip_block.rb
     app/controllers/account_security/admin_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
@@ -49,6 +50,9 @@ after_initialize do
     lib/account_security/feeds/tor_exit_list.rb
     lib/account_security/feeds/abuse_ip_db_blacklist.rb
     lib/account_security/network_familiarity.rb
+    lib/account_security/staff_audit.rb
+    lib/account_security/user_note_writer.rb
+    lib/account_security/temporary_ip_block_manager.rb
     lib/account_security/event_recorder.rb
     lib/account_security/assessment_service.rb
     lib/account_security/health.rb
@@ -56,6 +60,7 @@ after_initialize do
     app/jobs/regular/account_security_check_ip.rb
     app/jobs/scheduled/account_security_sync_tor_exit_list.rb
     app/jobs/scheduled/account_security_sync_abuseipdb_blacklist.rb
+    app/jobs/scheduled/account_security_expire_temporary_ip_blocks.rb
     app/jobs/scheduled/account_security_cleanup.rb
     app/services/problem_check/account_security_operational_health.rb
   ].each { |path| require_relative path }
@@ -99,14 +104,13 @@ after_initialize do
     )
   end
 
-  # Keep compact account-network telemetry aligned with Discourse's own
-  # deletion/anonymization lifecycle even when the protection module is off.
   on(:user_destroyed) do |user|
     next if user.blank?
 
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
     ::AccountSecurity::RiskEvent.where(user_id: user.id).update_all(user_id: nil)
     ::AccountSecurity::RiskEvent.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
+    ::AccountSecurity::TemporaryIpBlock.where(created_by_id: user.id).update_all(created_by_id: nil)
   end
 
   on(:user_anonymized) do |args|
@@ -128,13 +132,25 @@ after_initialize do
     ].each do |path|
       get "/admin/plugins/#{path}" => "admin/plugins#index", constraints: AdminConstraint.new
     end
+    get "/admin/plugins/account-security-events/:id" => "admin/plugins#index",
+        constraints: AdminConstraint.new
 
     get "/admin/plugins/account-security/overview.json" => "account_security/admin#overview",
         defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/events.json" => "account_security/admin#events",
         defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/events/:id.json" => "account_security/admin#show_event",
+        defaults: { format: :json }, constraints: AdminConstraint.new
     put "/admin/plugins/account-security/events/:id.json" => "account_security/admin#update_event",
         defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/events/:id/refresh.json" => "account_security/admin#refresh_event",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/events/:id/user-note.json" => "account_security/admin#add_user_note",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/events/:id/temporary-block.json" => "account_security/admin#create_temporary_block",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    delete "/admin/plugins/account-security/events/:id/temporary-block.json" => "account_security/admin#release_temporary_block",
+           defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/lookup.json" => "account_security/admin#lookup",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/trusted-networks.json" => "account_security/admin#trusted_networks",

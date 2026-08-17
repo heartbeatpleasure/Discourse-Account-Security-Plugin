@@ -20,6 +20,8 @@ module ::AccountSecurity
           api_key_configured: SiteSetting.account_security_abuseipdb_api_key.present?,
           usage_terms_acknowledged: SiteSetting.account_security_abuseipdb_usage_terms_acknowledged,
           abuse_reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
+          user_notes_enabled: SiteSetting.account_security_user_notes_enabled,
+          temporary_ip_blocks_enabled: SiteSetting.account_security_temporary_ip_blocks_enabled,
           provider_host: "api.abuseipdb.com",
         },
         provider: serialize_usage(usage),
@@ -32,6 +34,7 @@ module ::AccountSecurity
           cached_addresses: safe_count(IpIntelligence),
           open_events: safe_count(RiskEvent.where(status: "open")),
           trusted_networks: safe_count(TrustedNetwork.active),
+          active_temporary_ip_blocks: safe_count(TemporaryIpBlock.active),
         },
         privacy: {
           provider_receives_only_public_ip: true,

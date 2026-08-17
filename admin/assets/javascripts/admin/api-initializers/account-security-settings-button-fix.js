@@ -1,22 +1,49 @@
 import { schedule } from "@ember/runloop";
 import { apiInitializer } from "discourse/lib/api";
+import getURL from "discourse/lib/get-url";
 
-/**
- * Keep the Installed Plugins Settings control on a stable setting-key filter.
- *
- * Some Discourse builds generate a `plugin:<metadata name>` filter for plugin
- * settings. A plain setting-key prefix is more stable for this plugin and is
- * also used by the landing-page Settings links.
- */
 export default apiInitializer("0.11.1", (api) => {
   const PLUGIN_DISPLAY_NAME = "Discourse-Account-Security-Plugin";
-  const FIXED_SETTINGS_URL =
-    "/admin/site_settings/category/all_results?filter=account_security";
+  const GENERATED_FILTER = `plugin:${PLUGIN_DISPLAY_NAME}`;
+  const FIXED_SETTINGS_URL = getURL(
+    "/admin/site_settings/category/all_results?filter=account_security"
+  );
   const SETTINGS_BUTTON_SELECTOR =
     `[data-plugin-setting-button="${PLUGIN_DISPLAY_NAME}"]`;
 
   let observer = null;
   let clickHandlerInstalled = false;
+  let redirecting = false;
+
+  function parsedUrl(value) {
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return new URL(value, window.location.origin);
+    } catch {
+      return null;
+    }
+  }
+
+  function isGeneratedSettingsUrl(value) {
+    const parsed = parsedUrl(value);
+    return (
+      parsed?.pathname?.includes("/admin/site_settings/") &&
+      parsed.searchParams.get("filter") === GENERATED_FILTER
+    );
+  }
+
+  function redirectGeneratedFilter(value) {
+    if (redirecting || !isGeneratedSettingsUrl(value)) {
+      return false;
+    }
+
+    redirecting = true;
+    window.location.replace(FIXED_SETTINGS_URL);
+    return true;
+  }
 
   function findPluginCards() {
     return Array.from(document.querySelectorAll("[data-plugin-name]")).concat(
@@ -47,51 +74,52 @@ export default apiInitializer("0.11.1", (api) => {
     }
 
     return Boolean(
-      card.querySelector?.('a[href*="Discourse-Account-Security-Plugin"]')
+      card.querySelector?.(`a[href*="${PLUGIN_DISPLAY_NAME}"]`)
     );
   }
 
-  function rewriteSettingsLinkInCard(card) {
-    if (!cardLooksLikeOurPlugin(card)) {
+  function fixControl(control) {
+    if (!control || control.dataset.accountSecuritySettingsFixed === "1") {
       return;
     }
 
-    const anchors = Array.from(
-      card.querySelectorAll('a[href*="/admin/site_settings"]')
-    );
+    control.setAttribute?.("href", FIXED_SETTINGS_URL);
+    control.dataset.accountSecuritySettingsFixed = "1";
+  }
 
-    for (const anchor of anchors) {
-      if (anchor.dataset.accountSecuritySettingsFixed === "1") {
-        continue;
-      }
-
-      anchor.setAttribute("href", FIXED_SETTINGS_URL);
-      anchor.dataset.accountSecuritySettingsFixed = "1";
-    }
+  function rewriteGeneratedFilterLinks() {
+    document
+      .querySelectorAll('a[href*="/admin/site_settings/"]')
+      .forEach((anchor) => {
+        if (isGeneratedSettingsUrl(anchor.getAttribute("href"))) {
+          fixControl(anchor);
+        }
+      });
   }
 
   function rewriteExactSettingsButtons() {
-    const buttons = Array.from(
-      document.querySelectorAll(SETTINGS_BUTTON_SELECTOR)
-    );
+    document
+      .querySelectorAll(SETTINGS_BUTTON_SELECTOR)
+      .forEach((control) => fixControl(control));
+  }
 
-    for (const button of buttons) {
-      if (button.dataset.accountSecuritySettingsFixed === "1") {
-        continue;
+  function rewriteSettingsLinksInCards() {
+    findPluginCards().forEach((card) => {
+      if (!cardLooksLikeOurPlugin(card)) {
+        return;
       }
 
-      button.setAttribute("href", FIXED_SETTINGS_URL);
-      button.dataset.accountSecuritySettingsFixed = "1";
-    }
+      card
+        .querySelectorAll('a[href*="/admin/site_settings/"]')
+        .forEach((anchor) => fixControl(anchor));
+    });
   }
 
   function rewriteAll() {
     schedule("afterRender", () => {
-      // Current Discourse exposes a dedicated data attribute on each plugin's
-      // Settings button. Prefer that exact selector and retain the card-based
-      // rewrite only as a compatibility fallback for older admin UIs.
+      rewriteGeneratedFilterLinks();
       rewriteExactSettingsButtons();
-      findPluginCards().forEach((card) => rewriteSettingsLinkInCard(card));
+      rewriteSettingsLinksInCards();
     });
   }
 
@@ -104,20 +132,42 @@ export default apiInitializer("0.11.1", (api) => {
     document.addEventListener(
       "click",
       (event) => {
-        if (!window.location?.pathname?.startsWith("/admin/plugins")) {
-          return;
-        }
-
         const target = event.target;
         if (!target) {
           return;
         }
 
-        // Current Discourse renders an exact plugin identifier on the Settings
-        // control. Intercept it before Ember's LinkTo transition can use the
-        // generated plugin:<name> filter.
+        const anchor = target.closest?.("a[href]");
+        if (anchor && isGeneratedSettingsUrl(anchor.getAttribute("href"))) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.location.assign(FIXED_SETTINGS_URL);
+          return;
+        }
+
+        if (!window.location?.pathname?.includes("/admin/plugins")) {
+          return;
+        }
+
         const exactControl = target.closest?.(SETTINGS_BUTTON_SELECTOR);
         if (exactControl) {
+          event.preventDefault();
+          event.stopPropagation();
+          window.location.assign(FIXED_SETTINGS_URL);
+          return;
+        }
+
+        const genericPluginSettingControl = target.closest?.(
+          "[data-plugin-setting-button]"
+        );
+        if (
+          genericPluginSettingControl &&
+          cardLooksLikeOurPlugin(
+            genericPluginSettingControl.closest?.(
+              "[data-plugin-name], .admin-plugin"
+            )
+          )
+        ) {
           event.preventDefault();
           event.stopPropagation();
           window.location.assign(FIXED_SETTINGS_URL);
@@ -128,20 +178,16 @@ export default apiInitializer("0.11.1", (api) => {
           target.closest?.(
             'a[href*="/admin/site_settings"], button, .btn, .d-button'
           ) || target;
-        const label = `${control.getAttribute?.("aria-label") || ""} ${
-          control.getAttribute?.("title") || ""
-        }`;
-        const href = control.getAttribute?.("href") || "";
-        const isSettingsControl =
-          label.toLowerCase().includes("settings") ||
-          href.includes("/admin/site_settings");
-
-        if (!isSettingsControl) {
+        const card = control.closest?.("[data-plugin-name], .admin-plugin");
+        if (!cardLooksLikeOurPlugin(card)) {
           return;
         }
 
-        const card = control.closest?.("[data-plugin-name], .admin-plugin");
-        if (!cardLooksLikeOurPlugin(card)) {
+        const label = `${control.getAttribute?.("aria-label") || ""} ${
+          control.getAttribute?.("title") || ""
+        } ${control.textContent || ""}`.toLowerCase();
+        const href = control.getAttribute?.("href") || "";
+        if (!label.includes("settings") && !href.includes("/admin/site_settings")) {
           return;
         }
 
@@ -168,14 +214,21 @@ export default apiInitializer("0.11.1", (api) => {
   }
 
   api.onPageChange((url) => {
-    if (url?.startsWith("/admin/plugins")) {
+    if (redirectGeneratedFilter(url)) {
+      return;
+    }
+
+    redirecting = false;
+    if (url?.includes("/admin/plugins")) {
       start();
     } else {
       stop();
     }
   });
 
-  if (window.location?.pathname?.startsWith("/admin/plugins")) {
-    start();
+  if (!redirectGeneratedFilter(window.location?.href)) {
+    if (window.location?.pathname?.includes("/admin/plugins")) {
+      start();
+    }
   }
 });

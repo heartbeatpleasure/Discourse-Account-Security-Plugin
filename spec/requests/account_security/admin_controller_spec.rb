@@ -10,6 +10,11 @@ RSpec.describe AccountSecurity::AdminController do
     [
       [:get, "/admin/plugins/account-security/overview.json", {}],
       [:get, "/admin/plugins/account-security/events.json", {}],
+      [:get, "/admin/plugins/account-security/events/1.json", {}],
+      [:post, "/admin/plugins/account-security/events/1/refresh.json", {}],
+      [:post, "/admin/plugins/account-security/events/1/user-note.json", { confirmed: true }],
+      [:post, "/admin/plugins/account-security/events/1/temporary-block.json", { confirmed: true, duration_minutes: 60 }],
+      [:delete, "/admin/plugins/account-security/events/1/temporary-block.json", {}],
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/trusted-networks.json", {}],
       [:get, "/admin/plugins/account-security/health.json", {}],

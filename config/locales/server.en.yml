@@ -9,7 +9,9 @@ en:
     account_security_login_checks_enabled: "Assess public IP addresses after successful login, prioritizing newly observed networks."
     account_security_blacklist_sync_enabled: "Synchronize the AbuseIPDB high-confidence blacklist locally four times per day."
     account_security_tor_feed_enabled: "Synchronize the official Tor exit list locally once per hour. Tor is context only and never raises risk by itself."
-    account_security_abuse_reporting_enabled: "Permit provider reporting only for a locally corroborated, threshold-exceeded authentication-abuse event. OFF by default. Version 0.1 does not generate such events yet, so enabling this setting alone cannot send a report."
+    account_security_abuse_reporting_enabled: "Permit provider reporting only for a locally corroborated, threshold-exceeded authentication-abuse event. OFF by default. The plugin does not automatically create confirmed authentication-abuse clusters yet, so enabling this setting alone cannot send a report."
+    account_security_user_notes_enabled: "Add one concise User Note for a High/Critical escalated event when the Discourse User Notes plugin is available. OFF by default. Notes omit the raw IP address and provider score."
+    account_security_temporary_ip_blocks_enabled: "Allow administrators to create explicit, time-limited Discourse IP blocks from eligible High/Critical events. OFF by default. Account Security never takes ownership of an existing screening rule."
     account_security_daily_check_budget: "Local safety budget for AbuseIPDB CHECK requests per UTC day. Provider rate-limit headers remain authoritative."
     account_security_registration_reserve: "Checks protected for new registrations before normal-user login enrichment may consume them."
     account_security_staff_reserve: "Checks protected for new staff/admin login networks."
@@ -34,4 +36,11 @@ en:
       trusted:
         broad_confirmation_required: "Broad network ranges require explicit confirmation."
         duplicate: "That trusted network already exists."
+      events:
+        user_note_unavailable: "A User Note cannot be created for this event."
+        existing_ip_screening: "A Discourse IP screening rule already applies to this address. Account Security will not replace or take ownership of it."
+        temporary_block_not_eligible: "This event does not meet the safety requirements for a temporary IP block."
+
+  account_security:
+    user_note: "Account Security event #%{event_id}: %{event_type} was escalated for staff review with %{severity} severity. This security signal does not by itself establish account misconduct."
 

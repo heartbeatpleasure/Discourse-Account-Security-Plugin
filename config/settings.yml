@@ -44,6 +44,14 @@ plugins:
     default: false
     client: false
 
+  account_security_user_notes_enabled:
+    default: false
+    client: false
+
+  account_security_temporary_ip_blocks_enabled:
+    default: false
+    client: false
+
   account_security_daily_check_budget:
     default: 1000
     type: integer

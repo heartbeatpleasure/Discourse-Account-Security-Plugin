@@ -17,6 +17,7 @@ module ::AccountSecurity
         high_critical_events: RiskEvent.where(status: "open", severity: %w[high critical]).count,
         cached_addresses: IpIntelligence.count,
         trusted_networks: TrustedNetwork.active.count,
+        active_temporary_ip_blocks: TemporaryIpBlock.active.count,
         reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
       )
     end
@@ -29,7 +30,7 @@ module ::AccountSecurity
       raise Discourse::InvalidParameters.new(:status) if status.present? && !RiskEvent::STATUSES.include?(status)
       raise Discourse::InvalidParameters.new(:severity) if severity.present? && !RiskEvent::SEVERITIES.include?(severity)
 
-      scope = RiskEvent.includes(:user, :reviewed_by).order(id: :desc)
+      scope = RiskEvent.includes(:user, :reviewed_by).order(last_seen_at: :desc, id: :desc)
       scope = scope.where(status: status) if status.present?
       scope = scope.where(severity: severity) if severity.present?
       total = scope.count
@@ -39,14 +40,89 @@ module ::AccountSecurity
       render_json_dump(page: page, per_page: per_page, total: total, items: items.map { |event| serialize_event(event) })
     end
 
+    def show_event
+      event = find_event!
+      render_json_dump(event_detail_payload(event))
+    end
+
     def update_event
       rate_limit!("event-update")
-      event = RiskEvent.find(positive_integer_param!(:id))
+      event = find_event!
       status = params.require(:status).to_s
       raise Discourse::InvalidParameters.new(:status) unless RiskEvent::STATUSES.include?(status)
-      reason = params[:resolution_reason].to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, 240).presence
-      event.update!(status: status, reviewed_by_id: current_user.id, reviewed_at: Time.zone.now, resolution_reason: reason)
-      render_json_dump(success: true, event: serialize_event(event.reload))
+      reason = clean_optional(params[:resolution_reason], 240)
+      event.update!(
+        status: status,
+        reviewed_by_id: current_user.id,
+        reviewed_at: Time.zone.now,
+        resolution_reason: reason,
+      )
+      StaffAudit.log!(actor: current_user, action: "event_review_changed", details: { event_id: event.id, status: status })
+      render_json_dump(success: true, event: serialize_event(event.reload, detail: true))
+    end
+
+    def refresh_event
+      rate_limit!("event-refresh", 10)
+      event = find_event!
+      result = AssessmentService.call(
+        ip: event.ip_address.to_s,
+        user: nil,
+        trigger: "manual",
+        force_remote: true,
+        allow_remote: true,
+      )
+
+      if result.intelligence
+        event.update!(
+          risk_level: result.intelligence.risk_level,
+          severity: EventRecorder.severity_for(result.intelligence.risk_level),
+          evidence_strength: result.intelligence.evidence_strength,
+          ip_intelligence_id: result.intelligence.id,
+          last_seen_at: Time.zone.now,
+        )
+      end
+
+      StaffAudit.log!(actor: current_user, action: "event_refreshed", details: { event_id: event.id, result: result.source || result.reason })
+      render_json_dump(
+        success: result.success,
+        reason: result.reason,
+        source: result.source,
+        event: serialize_event(event.reload, detail: true),
+      )
+    end
+
+    def add_user_note
+      rate_limit!("event-user-note", 10)
+      require_confirmation!
+      event = find_event!
+      unless UserNoteWriter.record!(event: event, actor: current_user)
+        return render_json_error(I18n.t("admin.account_security.events.user_note_unavailable"), status: :unprocessable_entity)
+      end
+
+      render_json_dump(success: true, event: serialize_event(event.reload, detail: true))
+    end
+
+    def create_temporary_block
+      rate_limit!("event-temp-block", 10)
+      require_confirmation!
+      event = find_event!
+      block = TemporaryIpBlockManager.create!(
+        event: event,
+        actor: current_user,
+        duration_minutes: params.require(:duration_minutes),
+      )
+      render_json_dump(success: true, temporary_block: serialize_temporary_block(block))
+    rescue TemporaryIpBlockManager::ExistingScreening
+      render_json_error(I18n.t("admin.account_security.events.existing_ip_screening"), status: :unprocessable_entity)
+    rescue TemporaryIpBlockManager::NotEligible
+      render_json_error(I18n.t("admin.account_security.events.temporary_block_not_eligible"), status: :unprocessable_entity)
+    end
+
+    def release_temporary_block
+      rate_limit!("event-temp-block-release", 10)
+      event = find_event!
+      block = TemporaryIpBlockManager.release_for_event!(event: event, actor: current_user)
+      render_json_dump(success: true, temporary_block: serialize_temporary_block(block.reload))
     end
 
     def lookup
@@ -83,6 +159,7 @@ module ::AccountSecurity
       raise Discourse::InvalidParameters.new(:scope) unless TrustedNetwork::SCOPES.include?(scope)
       expires_at = parse_optional_time(params[:expires_at])
       item = TrustedNetwork.create!(network: network, label: label, reason: reason, scope: scope, created_by_id: current_user.id, expires_at: expires_at)
+      StaffAudit.log!(actor: current_user, action: "trusted_network_created", details: { trusted_network_id: item.id })
       render_json_dump(success: true, item: serialize_trusted_network(item))
     rescue ActiveRecord::RecordNotUnique
       render_json_error(I18n.t("admin.account_security.trusted.duplicate"), status: :unprocessable_entity)
@@ -90,7 +167,10 @@ module ::AccountSecurity
 
     def delete_trusted_network
       rate_limit!("trusted-delete", 20)
-      TrustedNetwork.find(positive_integer_param!(:id)).destroy!
+      item = TrustedNetwork.find(positive_integer_param!(:id))
+      item_id = item.id
+      item.destroy!
+      StaffAudit.log!(actor: current_user, action: "trusted_network_deleted", details: { trusted_network_id: item_id })
       render_json_dump(success: true)
     end
 
@@ -106,6 +186,7 @@ module ::AccountSecurity
     def reset_circuit
       rate_limit!("reset-circuit", 5)
       CircuitBreaker.reset!
+      StaffAudit.log!(actor: current_user, action: "circuit_reset")
       render_json_dump(success: true, circuit_breaker: CircuitBreaker.state)
     end
 
@@ -117,10 +198,16 @@ module ::AccountSecurity
 
     def report_abuse
       rate_limit!("report-abuse", 5)
-      unless params[:confirmed] == true || params[:confirmed].to_s == "true"
-        raise Discourse::InvalidParameters.new(:confirmed)
+      require_confirmation!
+      result = AbuseReporter.report_event!(event_id: params.require(:event_id), actor: current_user)
+      if result[:success]
+        StaffAudit.log!(
+          actor: current_user,
+          action: "abuse_reported",
+          details: { event_id: result[:risk_event_id], report_id: result[:report_id] },
+        )
       end
-      render_json_dump(AbuseReporter.report_event!(event_id: params.require(:event_id), actor: current_user))
+      render_json_dump(result)
     end
 
     private
@@ -134,6 +221,15 @@ module ::AccountSecurity
       RateLimiter.new(current_user, "account-security-admin-#{suffix}", limit, period).performed!
     end
 
+    def require_confirmation!
+      confirmed = params[:confirmed] == true || params[:confirmed].to_s == "true"
+      raise Discourse::InvalidParameters.new(:confirmed) unless confirmed
+    end
+
+    def find_event!
+      RiskEvent.includes(:user, :reviewed_by, :ip_intelligence).find(positive_integer_param!(:id))
+    end
+
     def positive_integer_param!(name)
       positive_integer_value(params[name]) || raise(Discourse::InvalidParameters.new(name))
     end
@@ -144,9 +240,13 @@ module ::AccountSecurity
     end
 
     def clean_required(value, max, name)
-      cleaned = value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max)
+      cleaned = clean_optional(value, max)
       raise Discourse::InvalidParameters.new(name) if cleaned.blank?
       cleaned
+    end
+
+    def clean_optional(value, max)
+      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max).presence
     end
 
     def parse_optional_time(value)
@@ -158,8 +258,33 @@ module ::AccountSecurity
       raise Discourse::InvalidParameters.new(:expires_at)
     end
 
-    def serialize_event(event)
+    def event_detail_payload(event)
+      report = ProviderReport.find_by(risk_event_id: event.id)
+      temporary_block = TemporaryIpBlock.unreleased.where(risk_event_id: event.id).order(id: :desc).first
       {
+        event: serialize_event(event, detail: true),
+        intelligence: serialize_intelligence(event.ip_intelligence),
+        temporary_block: serialize_temporary_block(temporary_block),
+        provider_report: report && {
+          id: report.id,
+          status: report.status,
+          provider_status: report.provider_status,
+          reported_at: report.reported_at&.iso8601,
+        },
+        capabilities: {
+          user_notes_enabled: SiteSetting.account_security_user_notes_enabled,
+          user_note_available: UserNoteWriter.eligible?(event),
+          temporary_ip_blocks_enabled: SiteSetting.account_security_temporary_ip_blocks_enabled,
+          temporary_block_eligible: TemporaryIpBlockManager.eligible_event?(event),
+          abuse_reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
+          abuse_reportable: AbuseReporter.reportable_event?(event),
+        },
+        temporary_block_durations: TemporaryIpBlockManager::ALLOWED_DURATIONS,
+      }
+    end
+
+    def serialize_event(event, detail: false)
+      payload = {
         id: event.id,
         event_type: event.event_type,
         severity: event.severity,
@@ -167,13 +292,17 @@ module ::AccountSecurity
         evidence_strength: event.evidence_strength,
         ip_address: event.ip_address.to_s,
         status: event.status,
-        context: event.context,
+        occurrence_count: event.occurrence_count.to_i,
         created_at: event.created_at&.iso8601,
+        last_seen_at: event.last_seen_at&.iso8601,
         reviewed_at: event.reviewed_at&.iso8601,
         resolution_reason: event.resolution_reason,
+        user_note_created_at: event.user_note_created_at&.iso8601,
+        context: event.context,
         user: event.user && { id: event.user.id, username: event.user.username },
         reviewed_by: event.reviewed_by && { id: event.reviewed_by.id, username: event.reviewed_by.username },
       }
+      payload
     end
 
     def serialize_intelligence(record)
@@ -195,6 +324,18 @@ module ::AccountSecurity
         provider_checked_at: record.provider_checked_at&.iso8601,
         next_check_after: record.next_check_after&.iso8601,
         last_seen_at: record.last_seen_at&.iso8601,
+      }
+    end
+
+    def serialize_temporary_block(block)
+      return nil unless block
+      {
+        id: block.id,
+        ip_address: block.ip_address.to_s,
+        expires_at: block.expires_at&.iso8601,
+        released_at: block.released_at&.iso8601,
+        release_reason: block.release_reason,
+        active: block.released_at.blank? && block.expires_at.present? && block.expires_at > Time.zone.now,
       }
     end
 
