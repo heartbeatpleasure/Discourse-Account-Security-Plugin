@@ -28,6 +28,24 @@ plugins:
     default: true
     client: false
 
+  account_security_account_correlation_enabled:
+    default: true
+    client: false
+
+  account_security_correlation_min_score:
+    default: 40
+    type: integer
+    min: 30
+    max: 90
+    client: false
+
+  account_security_correlation_retention_days:
+    default: 180
+    type: integer
+    min: 30
+    max: 730
+    client: false
+
   account_security_auth_abuse_detection_enabled:
     default: true
     client: false

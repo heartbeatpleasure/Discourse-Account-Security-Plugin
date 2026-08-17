@@ -18,6 +18,9 @@ module ::AccountSecurity
         cached_addresses: IpIntelligence.count,
         trusted_networks: TrustedNetwork.active.count,
         active_temporary_ip_blocks: TemporaryIpBlock.active.count,
+        open_correlations: AccountCorrelation.unresolved.count,
+        strong_correlations: AccountCorrelation.unresolved.where(confidence: %w[strong very_strong]).count,
+        correlation_enabled: SiteSetting.account_security_account_correlation_enabled,
         reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
       )
     end
@@ -172,6 +175,81 @@ module ::AccountSecurity
       )
     end
 
+    def correlations
+      page = positive_integer_value(params[:page]) || 1
+      per_page = 50
+      status = params[:status].to_s
+      confidence = params[:confidence].to_s
+      search = clean_optional(params[:search], 60)
+
+      raise Discourse::InvalidParameters.new(:status) if status.present? && !AccountCorrelation::STATUSES.include?(status)
+      if confidence.present? && !AccountCorrelation::CONFIDENCES.include?(confidence)
+        raise Discourse::InvalidParameters.new(:confidence)
+      end
+
+      scope = AccountCorrelation.includes(:user_a, :user_b, :reviewed_by).order(score: :desc, last_seen_at: :desc, id: :desc)
+      scope = scope.where(status: status) if status.present?
+      scope = scope.where(confidence: confidence) if confidence.present?
+      if search.present?
+        pattern = "%#{ActiveRecord::Base.sanitize_sql_like(search.downcase)}%"
+        ids = User.where("username_lower LIKE ?", pattern).limit(100).pluck(:id)
+        scope = scope.where("user_a_id IN (:ids) OR user_b_id IN (:ids)", ids: ids.presence || [-1])
+      end
+
+      total = scope.count
+      max_page = [(total.to_f / per_page).ceil, 1].max
+      page = [page, max_page].min
+      items = scope.offset((page - 1) * per_page).limit(per_page)
+
+      render_json_dump(
+        enabled: SiteSetting.account_security_account_correlation_enabled,
+        page: page,
+        per_page: per_page,
+        total: total,
+        open_count: AccountCorrelation.where(status: "open").count,
+        strong_open_count: AccountCorrelation.where(status: %w[open monitor], confidence: %w[strong very_strong]).count,
+        scan: AccountCorrelationScanner.status,
+        items: items.map { |item| serialize_correlation(item) },
+      )
+    end
+
+    def update_correlation
+      rate_limit!("correlation-update", 20)
+      correlation = find_correlation!
+      status = params.require(:status).to_s
+      raise Discourse::InvalidParameters.new(:status) unless AccountCorrelation::STATUSES.include?(status)
+      require_confirmation! if status == "confirmed_duplicate"
+
+      reason = clean_optional(params[:resolution_reason], 240)
+      correlation.update!(
+        status: status,
+        reviewed_by_id: current_user.id,
+        reviewed_at: Time.zone.now,
+        resolution_reason: reason,
+      )
+      StaffAudit.log!(
+        actor: current_user,
+        action: "account_correlation_review_changed",
+        details: { correlation_id: correlation.id, status: status },
+      )
+      render_json_dump(success: true, item: serialize_correlation(correlation.reload))
+    end
+
+    def rebuild_correlations
+      rate_limit!("correlation-rebuild", 1, 30.minutes)
+      unless SiteSetting.account_security_account_correlation_enabled
+        return render_json_error(I18n.t("admin.account_security.correlations.disabled"), status: :unprocessable_entity)
+      end
+
+      result = AccountCorrelationScanner.enqueue!(requested_by_id: current_user.id)
+      if result[:success]
+        StaffAudit.log!(actor: current_user, action: "account_correlation_scan_started")
+        render_json_dump(result)
+      else
+        render json: result, status: :unprocessable_entity
+      end
+    end
+
     def trusted_networks
       items = TrustedNetwork.includes(:created_by).order(id: :desc).limit(500)
       render_json_dump(items: items.map { |item| serialize_trusted_network(item) })
@@ -280,6 +358,10 @@ module ::AccountSecurity
     def find_event!
       RiskEvent.includes(:user, :reviewed_by, :ip_intelligence).find(positive_integer_param!(:id))
     end
+    def find_correlation!
+      AccountCorrelation.includes(:user_a, :user_b, :reviewed_by).find(positive_integer_param!(:id))
+    end
+
 
     def positive_integer_param!(name)
       positive_integer_value(params[name]) || raise(Discourse::InvalidParameters.new(name))
@@ -407,6 +489,34 @@ module ::AccountSecurity
         network_key: record.network_key,
         expires_at: record.expires_at&.iso8601,
         active: record.expires_at.present? && record.expires_at > Time.zone.now,
+      }
+    end
+
+    def serialize_correlation(item)
+      evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
+      {
+        id: item.id,
+        score: item.score.to_i,
+        confidence: item.confidence,
+        status: item.status,
+        first_seen_at: item.first_seen_at&.iso8601,
+        last_seen_at: item.last_seen_at&.iso8601,
+        reviewed_at: item.reviewed_at&.iso8601,
+        resolution_reason: item.resolution_reason,
+        user_a: item.user_a && { id: item.user_a.id, username: item.user_a.username },
+        user_b: item.user_b && { id: item.user_b.id, username: item.user_b.username },
+        reviewed_by: item.reviewed_by && { id: item.reviewed_by.id, username: item.reviewed_by.username },
+        evidence: {
+          shared_registration_ip: evidence["shared_registration_ip"] == true,
+          same_current_ip: evidence["same_current_ip"] == true,
+          shared_network_count: evidence["shared_network_count"].to_i,
+          shared_networks: Array(evidence["shared_networks"]).map(&:to_s).first(AccountCorrelationService::MAX_SHARED_NETWORKS_IN_PAYLOAD),
+          shared_session_signature_count: evidence["shared_session_signature_count"].to_i,
+          registration_delta_minutes: evidence["registration_delta_minutes"].to_i,
+          max_shared_network_users: evidence["max_shared_network_users"].to_i,
+          large_shared_network: evidence["large_shared_network"] == true,
+          raw_user_agent_stored: false,
+        },
       }
     end
 

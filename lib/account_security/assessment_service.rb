@@ -4,7 +4,7 @@ module ::AccountSecurity
   class AssessmentService
     Result = Struct.new(:success, :reason, :intelligence, :event, :new_network, :source, keyword_init: true)
 
-    def self.call(ip:, user: nil, trigger:, force_remote: false, allow_remote: true, event_context: {})
+    def self.call(ip:, user: nil, trigger:, force_remote: false, allow_remote: true, event_context: {}, familiarity: nil)
       new(
         ip: ip,
         user: user,
@@ -12,16 +12,18 @@ module ::AccountSecurity
         force_remote: force_remote,
         allow_remote: allow_remote,
         event_context: event_context,
+        familiarity: familiarity,
       ).call
     end
 
-    def initialize(ip:, user:, trigger:, force_remote:, allow_remote:, event_context:)
+    def initialize(ip:, user:, trigger:, force_remote:, allow_remote:, event_context:, familiarity:)
       @ip = IpNormalizer.normalize_public(ip)
       @user = user
       @trigger = trigger.to_s
       @force_remote = force_remote == true
       @allow_remote = allow_remote == true
       @event_context = event_context.is_a?(Hash) ? event_context : {}
+      @familiarity = familiarity.is_a?(Hash) ? familiarity : nil
     end
 
     def call
@@ -31,7 +33,7 @@ module ::AccountSecurity
 
       Statistics.increment!(assessment_stats)
       registration = @trigger == "registration"
-      familiarity = @user ? NetworkFamiliarity.observe!(user: @user, ip: @ip, registration: registration) : { new_network: true, network: nil }
+      familiarity = @familiarity || (@user ? NetworkFamiliarity.observe!(user: @user, ip: @ip, registration: registration) : { new_network: true, network: nil })
 
       trusted = trusted_network
       if trusted

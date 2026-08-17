@@ -17,6 +17,8 @@ module ::AccountSecurity
       notification_suppression_created
       notification_suppression_released
       abuse_reported
+      account_correlation_review_changed
+      account_correlation_scan_started
     ].freeze
 
     SAFE_DETAIL_KEYS = %i[
@@ -30,6 +32,7 @@ module ::AccountSecurity
       duration_hours
       feed
       result
+      correlation_id
     ].freeze
 
     SAFE_TOKEN = /\A[a-z0-9_.:-]{1,80}\z/i

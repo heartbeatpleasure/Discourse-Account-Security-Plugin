@@ -6,6 +6,9 @@ en:
     account_security_abuseipdb_max_age_days: "Maximum report age requested from AbuseIPDB CHECK. Normal operation does not request verbose report comments."
     account_security_registration_checks_enabled: "Assess public registration IP addresses after account creation."
     account_security_login_checks_enabled: "Assess public IP addresses after successful login, prioritizing newly observed networks."
+    account_security_account_correlation_enabled: "Enable local account-correlation analysis. This compares Discourse registration/current IPs, observed networks and a site-local HMAC of existing session user-agent data. It is not a device fingerprint and never suspends or blocks accounts automatically."
+    account_security_correlation_min_score: "Minimum local correlation score required before a new account-pair candidate is stored for staff review."
+    account_security_correlation_retention_days: "Days to retain unresolved, monitored, expected-shared-network and dismissed correlation candidates. Confirmed duplicate classifications are retained while both accounts exist."
     account_security_auth_abuse_detection_enabled: "Locally aggregate failed logins, invalid login codes, password-reset requests and rejected registrations. Counters live in Redis and expire automatically; provider checks occur only after a configured threshold is crossed."
     account_security_failed_login_threshold: "Failed login attempts from one public IP across usernames within 10 minutes before one abuse-cluster assessment is eligible."
     account_security_failed_login_single_account_threshold: "Failed login attempts from one public IP against the same account within 10 minutes before one abuse-cluster assessment is eligible."
@@ -45,6 +48,8 @@ en:
       trusted:
         broad_confirmation_required: "Broad network ranges require explicit confirmation."
         duplicate: "That trusted network already exists."
+      correlations:
+        disabled: "Account correlation is disabled in settings."
       events:
         user_note_unavailable: "A User Note cannot be created for this event."
         existing_ip_screening: "A Discourse IP screening rule already applies to this address. Account Security will not replace or take ownership of it."

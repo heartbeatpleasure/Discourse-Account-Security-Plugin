@@ -6,6 +6,9 @@ nl:
     account_security_abuseipdb_max_age_days: "Maximale ouderdom van meldingen die via AbuseIPDB CHECK worden meegenomen."
     account_security_registration_checks_enabled: "Publieke registratie-IP-adressen na accountaanmaak beoordelen."
     account_security_login_checks_enabled: "Publieke IP-adressen na succesvolle login beoordelen."
+    account_security_account_correlation_enabled: "Lokale accountcorrelatie inschakelen. Dit vergelijkt Discourse registratie-/huidige IP-adressen, waargenomen netwerken en een site-lokale HMAC van bestaande sessie-user-agentgegevens. Dit is geen device fingerprint en accounts worden hierdoor nooit automatisch geschorst of geblokkeerd."
+    account_security_correlation_min_score: "Minimale lokale correlatiescore voordat een nieuw accountpaar als kandidaat voor staffbeoordeling wordt opgeslagen."
+    account_security_correlation_retention_days: "Aantal dagen dat onopgeloste, gemonitorde, verwachte gedeelde-netwerk- en afgewezen correlatiekandidaten worden bewaard. Bevestigde dubbele accounts blijven bewaard zolang beide accounts bestaan."
     account_security_auth_abuse_detection_enabled: "Mislukte logins, ongeldige logincodes, wachtwoordresetverzoeken en afgewezen registraties lokaal clusteren. Counters staan tijdelijk in Redis en providerchecks vinden pas plaats nadat een ingestelde drempel is overschreden."
     account_security_failed_login_threshold: "Aantal mislukte logins vanaf één publiek IP over verschillende gebruikersnamen binnen 10 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden."
     account_security_failed_login_single_account_threshold: "Aantal mislukte logins vanaf één publiek IP tegen hetzelfde account binnen 10 minuten voordat één abuse-clusterbeoordeling mag plaatsvinden."
@@ -45,6 +48,8 @@ nl:
       trusted:
         broad_confirmation_required: "Brede netwerkranges vereisen expliciete bevestiging."
         duplicate: "Dit trusted network bestaat al."
+      correlations:
+        disabled: "Accountcorrelatie is uitgeschakeld in de instellingen."
       events:
         user_note_unavailable: "Voor dit event kan geen User Note worden aangemaakt."
         existing_ip_screening: "Voor dit adres geldt al een Discourse IP-screeningregel. Account Security vervangt deze niet en neemt deze niet over."

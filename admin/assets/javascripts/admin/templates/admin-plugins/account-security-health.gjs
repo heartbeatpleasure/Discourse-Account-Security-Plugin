@@ -195,6 +195,7 @@ export default RouteTemplate(
               <div><strong>{{i18n "admin.account_security.health.api_key"}}:</strong> {{@controller.data.configuration.api_key_configured}}</div>
               <div><strong>{{i18n "admin.account_security.health.reporting"}}:</strong> {{@controller.data.configuration.abuse_reporting_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.auth_abuse_detection"}}:</strong> {{@controller.data.configuration.auth_abuse_detection_enabled}}</div>
+              <div><strong>{{i18n "admin.account_security.health.account_correlation"}}:</strong> {{@controller.data.configuration.account_correlation_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.staff_notifications"}}:</strong> {{@controller.data.configuration.staff_notifications_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.user_notes"}}:</strong> {{@controller.data.configuration.user_notes_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.temporary_blocks"}}:</strong> {{@controller.data.configuration.temporary_ip_blocks_enabled}}</div>

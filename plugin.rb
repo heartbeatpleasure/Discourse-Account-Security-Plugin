@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.3.0
+# version: 0.4.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.3.0"
+  PLUGIN_VERSION = "0.4.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -37,6 +37,8 @@ after_initialize do
     app/models/account_security/daily_stat.rb
     app/models/account_security/temporary_ip_block.rb
     app/models/account_security/notification_suppression.rb
+    app/models/account_security/session_signature.rb
+    app/models/account_security/account_correlation.rb
     app/controllers/account_security/admin_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
@@ -51,6 +53,10 @@ after_initialize do
     lib/account_security/feeds/tor_exit_list.rb
     lib/account_security/feeds/abuse_ip_db_blacklist.rb
     lib/account_security/network_familiarity.rb
+    lib/account_security/session_signature_recorder.rb
+    lib/account_security/account_correlation_policy.rb
+    lib/account_security/account_correlation_service.rb
+    lib/account_security/account_correlation_scanner.rb
     lib/account_security/authentication_abuse_tracker.rb
     lib/account_security/authentication_tracking_hooks.rb
     lib/account_security/staff_audit.rb
@@ -64,6 +70,7 @@ after_initialize do
     lib/account_security/abuse_reporter.rb
     app/jobs/regular/account_security_check_ip.rb
     app/jobs/regular/account_security_process_auth_abuse_cluster.rb
+    app/jobs/regular/account_security_rebuild_correlations.rb
     app/jobs/scheduled/account_security_sync_tor_exit_list.rb
     app/jobs/scheduled/account_security_sync_abuseipdb_blacklist.rb
     app/jobs/scheduled/account_security_expire_temporary_ip_blocks.rb
@@ -80,27 +87,37 @@ after_initialize do
 
   on(:user_created) do |user|
     next unless SiteSetting.account_security_enabled
-    next unless SiteSetting.account_security_ip_reputation_enabled
-    next unless SiteSetting.account_security_registration_checks_enabled
     next if user.blank? || user.staged?
+
+    reputation_enabled =
+      SiteSetting.account_security_ip_reputation_enabled &&
+        SiteSetting.account_security_registration_checks_enabled
+    correlation_enabled = SiteSetting.account_security_account_correlation_enabled
+    next unless reputation_enabled || correlation_enabled
 
     ip = user.registration_ip_address || user.ip_address
     normalized = ::AccountSecurity::IpNormalizer.normalize_public(ip)
     next if normalized.blank?
 
+    token = UserAuthToken.where(user_id: user.id).order(id: :desc).first if correlation_enabled
     Jobs.enqueue(
       :account_security_check_ip,
       ip: normalized,
       user_id: user.id,
       trigger: "registration",
+      auth_token_id: token&.id,
     )
   end
 
   on(:user_logged_in) do |user|
     next unless SiteSetting.account_security_enabled
-    next unless SiteSetting.account_security_ip_reputation_enabled
-    next unless SiteSetting.account_security_login_checks_enabled
     next if user.blank? || user.staged?
+
+    reputation_enabled =
+      SiteSetting.account_security_ip_reputation_enabled &&
+        SiteSetting.account_security_login_checks_enabled
+    correlation_enabled = SiteSetting.account_security_account_correlation_enabled
+    next unless reputation_enabled || correlation_enabled
 
     token = UserAuthToken.where(user_id: user.id).order(id: :desc).first
     ip = token&.client_ip || user.ip_address
@@ -112,6 +129,7 @@ after_initialize do
       ip: normalized,
       user_id: user.id,
       trigger: user.staff? ? "staff_login" : "login",
+      auth_token_id: token&.id,
     )
   end
 
@@ -124,6 +142,9 @@ after_initialize do
     ::AccountSecurity::TemporaryIpBlock.where(created_by_id: user.id).update_all(created_by_id: nil)
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
+    ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
+    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
+    ::AccountSecurity::AccountCorrelation.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
   end
 
   on(:user_anonymized) do |args|
@@ -133,6 +154,8 @@ after_initialize do
 
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
+    ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
+    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
   end
 
   Discourse::Application.routes.append do
@@ -140,6 +163,7 @@ after_initialize do
       account-security
       account-security-events
       account-security-intelligence
+      account-security-correlations
       account-security-trusted-networks
       account-security-health
       account-security-statistics
@@ -170,6 +194,12 @@ after_initialize do
     delete "/admin/plugins/account-security/events/:id/notification-suppression.json" => "account_security/admin#release_notification_suppression",
            defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/lookup.json" => "account_security/admin#lookup",
+         defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/correlations.json" => "account_security/admin#correlations",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    put "/admin/plugins/account-security/correlations/:id.json" => "account_security/admin#update_correlation",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/correlations/rebuild.json" => "account_security/admin#rebuild_correlations",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/trusted-networks.json" => "account_security/admin#trusted_networks",
         defaults: { format: :json }, constraints: AdminConstraint.new

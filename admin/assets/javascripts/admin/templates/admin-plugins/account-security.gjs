@@ -7,6 +7,7 @@ const settingsUrl = getURL(
 );
 const eventsUrl = getURL("/admin/plugins/account-security-events");
 const intelligenceUrl = getURL("/admin/plugins/account-security-intelligence");
+const correlationsUrl = getURL("/admin/plugins/account-security-correlations");
 const trustedUrl = getURL("/admin/plugins/account-security-trusted-networks");
 const healthUrl = getURL("/admin/plugins/account-security-health");
 const statsUrl = getURL("/admin/plugins/account-security-statistics");
@@ -181,6 +182,12 @@ export default RouteTemplate(
             <span class="as-admin__badge">{{i18n "admin.account_security.category_security"}}</span>
             <h3>{{i18n "admin.account_security.events.title"}}</h3>
             <p>{{i18n "admin.account_security.events.description"}}</p>
+            <span class="as-admin__action">{{i18n "admin.account_security.open_tool"}}</span>
+          </a>
+          <a class="as-admin__card" href={{correlationsUrl}}>
+            <span class="as-admin__badge">{{i18n "admin.account_security.category_correlation"}}</span>
+            <h3>{{i18n "admin.account_security.correlations.title"}}</h3>
+            <p>{{i18n "admin.account_security.correlations.description"}}</p>
             <span class="as-admin__action">{{i18n "admin.account_security.open_tool"}}</span>
           </a>
           <a class="as-admin__card" href={{intelligenceUrl}}>
