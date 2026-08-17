@@ -8,7 +8,6 @@ RSpec.describe AccountSecurity::AbuseReporter do
     SiteSetting.account_security_enabled = true
     SiteSetting.account_security_ip_reputation_enabled = true
     SiteSetting.account_security_abuse_reporting_enabled = true
-    SiteSetting.account_security_abuseipdb_usage_terms_acknowledged = true
     SiteSetting.account_security_abuseipdb_api_key = "test-key"
   end
 

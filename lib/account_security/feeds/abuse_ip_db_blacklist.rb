@@ -8,7 +8,6 @@ module ::AccountSecurity
 
       def sync!
         return { success: false, skipped: "api_key_missing" } if SiteSetting.account_security_abuseipdb_api_key.blank?
-        return { success: false, skipped: "terms_not_acknowledged" } unless SiteSetting.account_security_abuseipdb_usage_terms_acknowledged
         result = Providers::AbuseIpDb.new.blacklist
         unless result.success
           mark_failure!(result.error_code)

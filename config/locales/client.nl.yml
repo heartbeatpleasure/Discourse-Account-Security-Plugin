@@ -114,7 +114,6 @@ nl:
           circuit: "Circuit breaker"
           configuration: "Configuratie"
           api_key: "API-key ingesteld"
-          terms: "Providervoorwaarden bevestigd"
           reporting: "Misbruik terugrapporteren ingeschakeld"
           user_notes: "User Notes-integratie"
           temporary_blocks: "Tijdelijke IP-blokkades"

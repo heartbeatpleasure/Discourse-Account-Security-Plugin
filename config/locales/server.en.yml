@@ -3,7 +3,6 @@ en:
     account_security_enabled: "Enable Account Security. The plugin starts in observation mode and never blocks accounts automatically in this version."
     account_security_ip_reputation_enabled: "Enable IP reputation intelligence inside Account Security."
     account_security_abuseipdb_api_key: "AbuseIPDB API v2 key. Stored server-side as a secret and never serialized to the browser."
-    account_security_abuseipdb_usage_terms_acknowledged: "Confirm that this site's use of AbuseIPDB is permitted by the plan and terms attached to the configured API key. Live AbuseIPDB calls remain disabled until acknowledged."
     account_security_abuseipdb_max_age_days: "Maximum report age requested from AbuseIPDB CHECK. Normal operation does not request verbose report comments."
     account_security_registration_checks_enabled: "Assess public registration IP addresses after account creation."
     account_security_login_checks_enabled: "Assess public IP addresses after successful login, prioritizing newly observed networks."

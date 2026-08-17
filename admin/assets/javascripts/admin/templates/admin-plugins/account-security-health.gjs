@@ -189,7 +189,6 @@ export default RouteTemplate(
             <div class="as-page__section-title"><h2>{{i18n "admin.account_security.health.configuration"}}</h2></div>
             <div class="as-page__stack">
               <div><strong>{{i18n "admin.account_security.health.api_key"}}:</strong> {{@controller.data.configuration.api_key_configured}}</div>
-              <div><strong>{{i18n "admin.account_security.health.terms"}}:</strong> {{@controller.data.configuration.usage_terms_acknowledged}}</div>
               <div><strong>{{i18n "admin.account_security.health.reporting"}}:</strong> {{@controller.data.configuration.abuse_reporting_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.user_notes"}}:</strong> {{@controller.data.configuration.user_notes_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.temporary_blocks"}}:</strong> {{@controller.data.configuration.temporary_ip_blocks_enabled}}</div>

@@ -11,7 +11,6 @@ module ::AccountSecurity
       raise Discourse::InvalidAccess unless SiteSetting.account_security_enabled
       raise Discourse::InvalidAccess unless SiteSetting.account_security_ip_reputation_enabled
       raise Discourse::InvalidAccess unless SiteSetting.account_security_abuse_reporting_enabled
-      raise Discourse::InvalidAccess unless SiteSetting.account_security_abuseipdb_usage_terms_acknowledged
       raise Discourse::InvalidAccess if SiteSetting.account_security_abuseipdb_api_key.blank?
 
       id = Integer(event_id, exception: false)

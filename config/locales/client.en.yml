@@ -114,7 +114,6 @@ en:
           circuit: "Circuit breaker"
           configuration: "Configuration"
           api_key: "API key configured"
-          terms: "Provider terms acknowledged"
           reporting: "Abuse reporting enabled"
           user_notes: "User Notes integration"
           temporary_blocks: "Temporary IP blocks"

@@ -3,7 +3,6 @@ nl:
     account_security_enabled: "Account Security inschakelen. De plugin werkt in deze versie observerend en blokkeert accounts nooit automatisch."
     account_security_ip_reputation_enabled: "IP-reputatie-intelligence binnen Account Security inschakelen."
     account_security_abuseipdb_api_key: "AbuseIPDB API v2-sleutel. Wordt uitsluitend server-side als secret opgeslagen."
-    account_security_abuseipdb_usage_terms_acknowledged: "Bevestig dat het gebruik van AbuseIPDB is toegestaan onder het abonnement en de voorwaarden van de ingestelde API-sleutel."
     account_security_abuseipdb_max_age_days: "Maximale ouderdom van meldingen die via AbuseIPDB CHECK worden meegenomen."
     account_security_registration_checks_enabled: "Publieke registratie-IP-adressen na accountaanmaak beoordelen."
     account_security_login_checks_enabled: "Publieke IP-adressen na succesvolle login beoordelen."

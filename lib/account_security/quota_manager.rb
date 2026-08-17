@@ -22,7 +22,6 @@ module ::AccountSecurity
       return Decision.new(allowed: false, reason: "disabled") unless SiteSetting.account_security_enabled
       return Decision.new(allowed: false, reason: "module_disabled") unless SiteSetting.account_security_ip_reputation_enabled
       return Decision.new(allowed: false, reason: "api_key_missing") if SiteSetting.account_security_abuseipdb_api_key.blank?
-      return Decision.new(allowed: false, reason: "terms_not_acknowledged") unless SiteSetting.account_security_abuseipdb_usage_terms_acknowledged
       return Decision.new(allowed: false, reason: "circuit_open") if CircuitBreaker.open?
 
       bucket = normalize_bucket(trigger)

@@ -13,10 +13,6 @@ plugins:
     secret: true
     client: false
 
-  account_security_abuseipdb_usage_terms_acknowledged:
-    default: false
-    client: false
-
   account_security_abuseipdb_max_age_days:
     default: 30
     type: integer

@@ -18,7 +18,6 @@ module ::AccountSecurity
           enabled: SiteSetting.account_security_enabled,
           ip_reputation_enabled: SiteSetting.account_security_ip_reputation_enabled,
           api_key_configured: SiteSetting.account_security_abuseipdb_api_key.present?,
-          usage_terms_acknowledged: SiteSetting.account_security_abuseipdb_usage_terms_acknowledged,
           abuse_reporting_enabled: SiteSetting.account_security_abuse_reporting_enabled,
           user_notes_enabled: SiteSetting.account_security_user_notes_enabled,
           temporary_ip_blocks_enabled: SiteSetting.account_security_temporary_ip_blocks_enabled,
@@ -49,7 +48,6 @@ module ::AccountSecurity
 
     def test!
       return payload.merge(test_result: { success: false, error_code: "api_key_missing" }) if SiteSetting.account_security_abuseipdb_api_key.blank?
-      return payload.merge(test_result: { success: false, error_code: "terms_not_acknowledged" }) unless SiteSetting.account_security_abuseipdb_usage_terms_acknowledged
 
       quota = QuotaManager.authorize("manual")
       return payload.merge(test_result: { success: false, error_code: quota.reason }) unless quota.allowed
@@ -61,7 +59,7 @@ module ::AccountSecurity
     def overall_status(usage, tor, blacklist, circuit)
       return "disabled" unless SiteSetting.account_security_enabled
       return "local_only" unless SiteSetting.account_security_ip_reputation_enabled
-      return "misconfigured" if SiteSetting.account_security_abuseipdb_api_key.blank? || !SiteSetting.account_security_abuseipdb_usage_terms_acknowledged
+      return "misconfigured" if SiteSetting.account_security_abuseipdb_api_key.blank?
       return "circuit_open" if circuit[:state] == "open"
       return "invalid_credentials" if usage&.last_status.to_i.in?([401, 403])
       return "quota_exhausted" if usage&.last_status.to_i == 429 || (usage&.remaining == 0 && usage&.reset_at.to_i > Time.zone.now.to_i)
