@@ -147,6 +147,7 @@ export default RouteTemplate(
         background: var(--danger-low, var(--primary-very-low));
       }
       .as-page__stack { display: grid; gap: .75rem; }
+      .as-page__hint--spaced { margin-top: .45rem !important; }
       .as-page__checkbox { display: flex; align-items: flex-start; gap: .5rem; }
       .as-page__checkbox input { flex: 0 0 auto; margin-top: .2rem; }
       .as-page__section-title { display: grid; gap: .25rem; margin-bottom: .8rem; }
@@ -183,7 +184,7 @@ export default RouteTemplate(
             <button class="btn" type="button" disabled={{@controller.isLoading}} {{on "click" (fn @controller.lookup true)}}>{{i18n "admin.account_security.intelligence.refresh"}}</button>
           </div>
         </div>
-        <p class="as-page__hint">{{i18n "admin.account_security.intelligence.refresh_hint"}}</p>
+        <p class="as-page__hint as-page__hint--spaced">{{i18n "admin.account_security.intelligence.refresh_hint"}}</p>
       </section>
 
       {{#if @controller.data}}

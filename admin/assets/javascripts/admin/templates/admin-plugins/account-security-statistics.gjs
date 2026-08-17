@@ -8,18 +8,18 @@ const overviewUrl = getURL("/admin/plugins/account-security");
 export default RouteTemplate(
   <template>
     <style>
-      .as-page {
+      .as-stats {
         --as-surface: var(--secondary);
         --as-surface-alt: var(--primary-very-low);
         --as-border: var(--primary-low);
         --as-muted: var(--primary-medium);
         display: flex;
-        min-width: 0;
         flex-direction: column;
         gap: 1rem;
+        min-width: 0;
       }
-      .as-page h1, .as-page h2, .as-page h3, .as-page p { margin: 0; }
-      .as-page__hero, .as-page__panel {
+      .as-stats h1, .as-stats h2, .as-stats h3, .as-stats h4, .as-stats p { margin: 0; }
+      .as-stats__hero, .as-stats__panel {
         min-width: 0;
         padding: 1.2rem 1.35rem;
         border: 1px solid var(--as-border);
@@ -27,183 +27,242 @@ export default RouteTemplate(
         background: var(--as-surface);
         box-shadow: 0 1px 2px rgb(0 0 0 / 3%);
       }
-      .as-page__hero, .as-page__panel-header {
+      .as-stats__hero {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
         gap: 1rem;
       }
-      .as-page__copy {
+      .as-stats__copy {
         display: flex;
         min-width: 0;
         flex: 1 1 auto;
         flex-direction: column;
         gap: .35rem;
       }
-      .as-page__muted, .as-page__hint { color: var(--as-muted); }
-      .as-page__actions, .as-page__buttons {
+      .as-stats__muted { color: var(--as-muted); }
+      .as-stats__actions {
         display: flex;
         flex: 0 0 auto;
         flex-wrap: wrap;
         align-items: center;
         justify-content: flex-end;
         gap: .5rem;
+        margin-left: auto;
       }
-      .as-page__actions { flex-wrap: nowrap; margin-left: auto; }
-      .as-page__actions .btn, .as-page__buttons .btn { white-space: nowrap; }
-      .as-page__metrics, .as-page__grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: .75rem;
-      }
-      .as-page__grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-      .as-page__item, .as-page__metric {
-        min-width: 0;
-        padding: .75rem;
-        border-radius: 12px;
-        background: var(--as-surface-alt);
-      }
-      .as-page__label {
-        color: var(--as-muted);
-        font-size: var(--font-down-1);
-        font-weight: 700;
-      }
-      .as-page__value {
-        margin-top: .2rem;
-        overflow-wrap: anywhere;
-        font-weight: 600;
-      }
-      .as-page__metric .as-page__value { font-size: var(--font-up-1); }
-      .as-page__toolbar, .as-page__form-row {
+      .as-stats__actions .btn { white-space: nowrap; }
+      .as-stats__toolbar {
         display: flex;
-        flex-wrap: wrap;
         align-items: flex-end;
-        gap: .75rem;
+        justify-content: space-between;
+        gap: 1rem;
       }
-      .as-page__field {
-        display: grid;
-        min-width: min(15rem, 100%);
-        flex: 1 1 15rem;
-        gap: .3rem;
-      }
-      .as-page__field label { font-weight: 700; }
-      .as-page__control,
-      .as-page__field input,
-      .as-page__field select,
-      .as-page__field textarea {
-        width: 100%;
+      .as-stats__period-control {
+        width: min(18rem, 100%);
         min-height: 42px;
-        box-sizing: border-box;
         margin: 0;
-        border: 1px solid var(--as-border);
-        border-radius: 10px;
-        background: var(--as-surface);
-      }
-      .as-page__field textarea { min-height: 90px; padding: .65rem .75rem; resize: vertical; }
-      .as-page__table-wrap {
-        width: 100%;
-        overflow-x: auto;
+        padding: 0 .85rem;
         border: 1px solid var(--as-border);
         border-radius: 12px;
-      }
-      .as-page__table { width: 100%; border-collapse: collapse; }
-      .as-page__table th, .as-page__table td {
-        padding: .7rem .75rem;
-        border-bottom: 1px solid var(--as-border);
-        text-align: left;
-        vertical-align: top;
-      }
-      .as-page__table th {
-        color: var(--as-muted);
-        font-size: var(--font-down-1);
-        white-space: nowrap;
-      }
-      .as-page__table tr:last-child td { border-bottom: 0; }
-      .as-page__code {
-        font-family: var(--d-font-family--monospace);
-        overflow-wrap: anywhere;
-      }
-      .as-page__badge {
-        display: inline-flex;
-        width: max-content;
-        padding: .25rem .5rem;
-        border: 1px solid var(--as-border);
-        border-radius: 999px;
         background: var(--as-surface-alt);
+        color: var(--primary);
+        box-sizing: border-box;
+      }
+      .as-stats__summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+        gap: .75rem;
+      }
+      .as-stats__summary-card {
+        min-width: 0;
+        padding: .8rem .9rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--as-surface-alt);
+      }
+      .as-stats__summary-label {
+        color: var(--as-muted);
         font-size: var(--font-down-1);
         font-weight: 700;
       }
-      .as-page__notice {
-        padding: .75rem .85rem;
-        border-left: 3px solid var(--tertiary);
-        border-radius: 8px;
-        background: var(--tertiary-very-low);
+      .as-stats__summary-value {
+        margin-top: .2rem;
+        font-size: var(--font-up-2);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
       }
-      .as-page__warning {
-        padding: .75rem .85rem;
-        border-left: 3px solid var(--danger);
-        border-radius: 8px;
-        background: var(--danger-low, var(--primary-very-low));
+      .as-stats__daily-list {
+        display: grid;
+        gap: .8rem;
+        margin-top: .9rem;
       }
-      .as-page__stack { display: grid; gap: .75rem; }
-      .as-page__checkbox { display: flex; align-items: flex-start; gap: .5rem; }
-      .as-page__checkbox input { flex: 0 0 auto; margin-top: .2rem; }
-      .as-page__section-title { display: grid; gap: .25rem; margin-bottom: .8rem; }
-      @media (max-width: 900px) {
-        .as-page__hero { flex-direction: column; }
-        .as-page__actions { align-self: flex-end; flex-wrap: wrap; margin-left: 0; }
-        .as-page__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .as-stats__daily-card {
+        min-width: 0;
+        padding: .9rem;
+        border: 1px solid var(--as-border);
+        border-radius: 14px;
+        background: var(--as-surface-alt);
       }
-      @media (max-width: 650px) {
-        .as-page__panel-header { flex-direction: column; }
-        .as-page__metrics, .as-page__grid { grid-template-columns: 1fr; }
-        .as-page__field { flex-basis: 100%; }
+      .as-stats__daily-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-bottom: .7rem;
+        border-bottom: 1px solid var(--as-border);
+      }
+      .as-stats__daily-header h3 { font-size: var(--font-up-1); }
+      .as-stats__daily-subtitle {
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+        font-weight: 700;
+      }
+      .as-stats__daily-groups {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: .65rem;
+        margin-top: .7rem;
+      }
+      .as-stats__daily-group {
+        min-width: 0;
+        padding: .7rem;
+        border-radius: 11px;
+        background: var(--secondary);
+      }
+      .as-stats__daily-group h4 {
+        margin-bottom: .55rem;
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+        font-weight: 700;
+      }
+      .as-stats__daily-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .5rem .75rem;
+      }
+      .as-stats__daily-metric { min-width: 0; }
+      .as-stats__daily-metric-label {
+        color: var(--as-muted);
+        font-size: var(--font-down-2);
+      }
+      .as-stats__daily-metric-value {
+        margin-top: .08rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      .as-stats__empty {
+        margin-top: .8rem;
+        padding: 1rem;
+        border-radius: 12px;
+        background: var(--as-surface-alt);
+        color: var(--as-muted);
+      }
+      @media (max-width: 1000px) {
+        .as-stats__daily-groups { grid-template-columns: 1fr 1fr; }
+      }
+      @media (max-width: 700px) {
+        .as-stats__hero { flex-direction: column; }
+        .as-stats__actions { justify-content: flex-start; margin-left: 0; }
+        .as-stats__toolbar { flex-direction: column; align-items: stretch; }
+        .as-stats__period-control { width: 100%; }
+        .as-stats__daily-groups { grid-template-columns: 1fr; }
+        .as-stats__daily-header { flex-direction: column; align-items: flex-start; gap: .25rem; }
+      }
+      @media (max-width: 460px) {
+        .as-stats__daily-metrics { grid-template-columns: 1fr; }
       }
     </style>
-    <div class="as-page">
-      <section class="as-page__hero">
-        <div class="as-page__copy">
+
+    <div class="as-stats">
+      <section class="as-stats__hero">
+        <div class="as-stats__copy">
           <h1>{{i18n "admin.account_security.statistics.title"}}</h1>
-          <p class="as-page__muted">{{i18n "admin.account_security.statistics.description"}}</p>
+          <p class="as-stats__muted">{{i18n "admin.account_security.statistics.description"}}</p>
         </div>
-        <div class="as-page__actions">
+        <div class="as-stats__actions">
           <a class="btn" href={{overviewUrl}}>{{i18n "admin.account_security.back_overview"}}</a>
         </div>
       </section>
 
-      <section class="as-page__panel">
-        <div class="as-page__field">
-          <label>{{i18n "admin.account_security.statistics.period"}}</label>
-          <select class="as-page__control" {{on "change" @controller.setPeriod}}>
-            <option value="7">7 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="90">90 days</option>
-            <option value="365">365 days</option>
+      <section class="as-stats__panel">
+        <div class="as-stats__toolbar">
+          <div class="as-stats__copy">
+            <h2>{{i18n "admin.account_security.statistics.period"}}</h2>
+            <p class="as-stats__muted">{{i18n "admin.account_security.statistics.period_description"}}</p>
+          </div>
+          <select class="as-stats__period-control" id="account-security-statistics-period" value={{@controller.period}} aria-label={{i18n "admin.account_security.statistics.period"}} disabled={{@controller.isLoading}} {{on "change" @controller.setPeriod}}>
+            <option value="7">{{i18n "admin.account_security.statistics.days_7"}}</option>
+            <option value="30">{{i18n "admin.account_security.statistics.days_30"}}</option>
+            <option value="90">{{i18n "admin.account_security.statistics.days_90"}}</option>
+            <option value="365">{{i18n "admin.account_security.statistics.days_365"}}</option>
           </select>
         </div>
       </section>
 
       {{#if @controller.data}}
-        <section class="as-page__metrics">
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.assessments"}}</div><div class="as-page__value">{{@controller.data.totals.assessments}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.provider_calls"}}</div><div class="as-page__value">{{@controller.data.totals.provider_calls}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.cache_hits"}}</div><div class="as-page__value">{{@controller.data.totals.cache_hits}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.events"}}</div><div class="as-page__value">{{@controller.data.totals.events_created}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.auth_abuse_clusters"}}</div><div class="as-page__value">{{@controller.data.totals.auth_abuse_clusters}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.notifications_sent"}}</div><div class="as-page__value">{{@controller.data.totals.notifications_sent}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.correlation_candidates"}}</div><div class="as-page__value">{{@controller.data.totals.correlation_candidates}}</div></div>
-          <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.statistics.correlation_scans"}}</div><div class="as-page__value">{{@controller.data.totals.correlation_scans}}</div></div>
+        <section class="as-stats__summary-grid">
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.assessments"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.assessments}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.provider_calls"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.provider_calls}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.cache_hits"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.cache_hits}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.events"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.events_created}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.auth_abuse_clusters"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.auth_abuse_clusters}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.notifications_sent"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.notifications_sent}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.correlation_candidates"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.correlation_candidates}}</div></div>
+          <div class="as-stats__summary-card"><div class="as-stats__summary-label">{{i18n "admin.account_security.statistics.correlation_scans"}}</div><div class="as-stats__summary-value">{{@controller.data.totals.correlation_scans}}</div></div>
         </section>
-        <section class="as-page__panel">
-          <div class="as-page__table-wrap">
-            <table class="as-page__table">
-              <thead><tr><th>{{i18n "admin.account_security.statistics.date"}}</th><th>{{i18n "admin.account_security.statistics.assessments"}}</th><th>{{i18n "admin.account_security.statistics.provider_calls"}}</th><th>{{i18n "admin.account_security.statistics.cache_hits"}}</th><th>{{i18n "admin.account_security.statistics.blacklist_hits"}}</th><th>{{i18n "admin.account_security.statistics.tor_hits"}}</th><th>{{i18n "admin.account_security.statistics.quota_skips"}}</th><th>{{i18n "admin.account_security.statistics.events"}}</th><th>{{i18n "admin.account_security.statistics.auth_abuse_clusters"}}</th><th>{{i18n "admin.account_security.statistics.notifications_sent"}}</th><th>{{i18n "admin.account_security.statistics.correlation_candidates"}}</th><th>{{i18n "admin.account_security.statistics.correlation_scans"}}</th></tr></thead>
-              <tbody>{{#each @controller.data.daily as |day|}}<tr><td>{{day.stat_date}}</td><td>{{day.assessments}}</td><td>{{day.provider_calls}}</td><td>{{day.cache_hits}}</td><td>{{day.local_blacklist_hits}}</td><td>{{day.tor_hits}}</td><td>{{day.quota_skips}}</td><td>{{day.events_created}}</td><td>{{day.auth_abuse_clusters}}</td><td>{{day.notifications_sent}}</td><td>{{day.correlation_candidates}}</td><td>{{day.correlation_scans}}</td></tr>{{/each}}</tbody>
-            </table>
+
+        <section class="as-stats__panel">
+          <div class="as-stats__copy">
+            <h2>{{i18n "admin.account_security.statistics.daily_breakdown"}}</h2>
+            <p class="as-stats__muted">{{i18n "admin.account_security.statistics.daily_breakdown_description"}}</p>
           </div>
+
+          {{#if @controller.data.daily.length}}
+            <div class="as-stats__daily-list">
+              {{#each @controller.data.daily as |day|}}
+                <article class="as-stats__daily-card">
+                  <div class="as-stats__daily-header">
+                    <h3>{{day.stat_date}}</h3>
+                    <div class="as-stats__daily-subtitle">{{i18n "admin.account_security.statistics.daily_summary"}}</div>
+                  </div>
+                  <div class="as-stats__daily-groups">
+                    <section class="as-stats__daily-group">
+                      <h4>{{i18n "admin.account_security.statistics.group_provider"}}</h4>
+                      <div class="as-stats__daily-metrics">
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.assessments"}}</div><div class="as-stats__daily-metric-value">{{day.assessments}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.provider_calls"}}</div><div class="as-stats__daily-metric-value">{{day.provider_calls}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.cache_hits"}}</div><div class="as-stats__daily-metric-value">{{day.cache_hits}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.quota_skips"}}</div><div class="as-stats__daily-metric-value">{{day.quota_skips}}</div></div>
+                      </div>
+                    </section>
+                    <section class="as-stats__daily-group">
+                      <h4>{{i18n "admin.account_security.statistics.group_local"}}</h4>
+                      <div class="as-stats__daily-metrics">
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.blacklist_hits"}}</div><div class="as-stats__daily-metric-value">{{day.local_blacklist_hits}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.tor_hits"}}</div><div class="as-stats__daily-metric-value">{{day.tor_hits}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.auth_abuse_clusters"}}</div><div class="as-stats__daily-metric-value">{{day.auth_abuse_clusters}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.correlation_candidates"}}</div><div class="as-stats__daily-metric-value">{{day.correlation_candidates}}</div></div>
+                      </div>
+                    </section>
+                    <section class="as-stats__daily-group">
+                      <h4>{{i18n "admin.account_security.statistics.group_outcomes"}}</h4>
+                      <div class="as-stats__daily-metrics">
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.events"}}</div><div class="as-stats__daily-metric-value">{{day.events_created}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.notifications_sent"}}</div><div class="as-stats__daily-metric-value">{{day.notifications_sent}}</div></div>
+                        <div class="as-stats__daily-metric"><div class="as-stats__daily-metric-label">{{i18n "admin.account_security.statistics.correlation_scans"}}</div><div class="as-stats__daily-metric-value">{{day.correlation_scans}}</div></div>
+                      </div>
+                    </section>
+                  </div>
+                </article>
+              {{/each}}
+            </div>
+          {{else}}
+            <div class="as-stats__empty">{{i18n "admin.account_security.no_data"}}</div>
+          {{/if}}
         </section>
       {{else}}
-        <p class="as-page__muted">{{i18n "admin.account_security.loading"}}</p>
+        <p class="as-stats__muted">{{i18n "admin.account_security.loading"}}</p>
       {{/if}}
     </div>
   </template>

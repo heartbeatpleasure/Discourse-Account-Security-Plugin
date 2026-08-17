@@ -49,20 +49,33 @@ export default RouteTemplate(
         flex: 0 0 auto;
         flex-wrap: wrap;
         align-items: center;
-        justify-content: flex-end;
         gap: .5rem;
       }
-      .as-page__actions { flex-wrap: nowrap; margin-left: auto; }
+      .as-page__actions {
+        justify-content: flex-end;
+        margin-left: auto;
+      }
+      .as-page__buttons { justify-content: flex-start; }
       .as-page__actions .btn, .as-page__buttons .btn { white-space: nowrap; }
-      .as-page__metrics, .as-page__grid {
+      .as-page__metrics {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: .75rem;
       }
-      .as-page__grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+      .as-page__health-grid {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) minmax(340px, 1.25fr);
+        gap: .75rem;
+      }
+      .as-page__feed-summary {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .75rem;
+      }
       .as-page__item, .as-page__metric {
         min-width: 0;
-        padding: .75rem;
+        padding: .8rem .9rem;
+        border: 1px solid var(--as-border);
         border-radius: 12px;
         background: var(--as-surface-alt);
       }
@@ -74,95 +87,59 @@ export default RouteTemplate(
       .as-page__value {
         margin-top: .2rem;
         overflow-wrap: anywhere;
-        font-weight: 600;
-      }
-      .as-page__metric .as-page__value { font-size: var(--font-up-1); }
-      .as-page__toolbar, .as-page__form-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        gap: .75rem;
-      }
-      .as-page__field {
-        display: grid;
-        min-width: min(15rem, 100%);
-        flex: 1 1 15rem;
-        gap: .3rem;
-      }
-      .as-page__field label { font-weight: 700; }
-      .as-page__control,
-      .as-page__field input,
-      .as-page__field select,
-      .as-page__field textarea {
-        width: 100%;
-        min-height: 42px;
-        box-sizing: border-box;
-        margin: 0;
-        border: 1px solid var(--as-border);
-        border-radius: 10px;
-        background: var(--as-surface);
-      }
-      .as-page__field textarea { min-height: 90px; padding: .65rem .75rem; resize: vertical; }
-      .as-page__table-wrap {
-        width: 100%;
-        overflow-x: auto;
-        border: 1px solid var(--as-border);
-        border-radius: 12px;
-      }
-      .as-page__table { width: 100%; border-collapse: collapse; }
-      .as-page__table th, .as-page__table td {
-        padding: .7rem .75rem;
-        border-bottom: 1px solid var(--as-border);
-        text-align: left;
-        vertical-align: top;
-      }
-      .as-page__table th {
-        color: var(--as-muted);
-        font-size: var(--font-down-1);
-        white-space: nowrap;
-      }
-      .as-page__table tr:last-child td { border-bottom: 0; }
-      .as-page__code {
-        font-family: var(--d-font-family--monospace);
-        overflow-wrap: anywhere;
-      }
-      .as-page__badge {
-        display: inline-flex;
-        width: max-content;
-        padding: .25rem .5rem;
-        border: 1px solid var(--as-border);
-        border-radius: 999px;
-        background: var(--as-surface-alt);
-        font-size: var(--font-down-1);
         font-weight: 700;
       }
-      .as-page__notice {
-        padding: .75rem .85rem;
-        border-left: 3px solid var(--tertiary);
-        border-radius: 8px;
-        background: var(--tertiary-very-low);
+      .as-page__metric .as-page__value {
+        font-size: var(--font-up-1);
+        font-variant-numeric: tabular-nums;
+      }
+      .as-page__stack { display: grid; gap: .85rem; }
+      .as-page__hint--spaced { margin-top: .3rem !important; }
+      .as-page__section-title { display: grid; gap: .25rem; margin-bottom: .85rem; }
+      .as-page__status-block {
+        margin-top: .15rem;
+        display: grid;
+        gap: .4rem;
+      }
+      .as-page__alert {
+        padding: .8rem 1rem;
+        border-radius: 12px;
+        border: 1px solid var(--primary-low);
+      }
+      .as-page__alert-title {
+        font-weight: 700;
+        margin-bottom: .2rem;
+      }
+      .as-page__alert--success {
+        border-color: var(--success-low-mid);
+        background: var(--success-low);
+        color: var(--success);
+      }
+      .as-page__alert--error {
+        border-color: var(--danger-low-mid);
+        background: var(--danger-low);
+        color: var(--danger);
       }
       .as-page__warning {
-        padding: .75rem .85rem;
-        border-left: 3px solid var(--danger);
-        border-radius: 8px;
-        background: var(--danger-low, var(--primary-very-low));
+        padding: .8rem 1rem;
+        border: 1px solid var(--danger-low-mid);
+        border-radius: 12px;
+        background: var(--danger-low);
+        color: var(--danger);
       }
-      .as-page__stack { display: grid; gap: .75rem; }
-      .as-page__checkbox { display: flex; align-items: flex-start; gap: .5rem; }
-      .as-page__checkbox input { flex: 0 0 auto; margin-top: .2rem; }
-      .as-page__section-title { display: grid; gap: .25rem; margin-bottom: .8rem; }
-      @media (max-width: 900px) {
+      @media (max-width: 980px) {
         .as-page__hero { flex-direction: column; }
-        .as-page__actions { align-self: flex-end; flex-wrap: wrap; margin-left: 0; }
+        .as-page__actions { align-self: flex-end; margin-left: 0; }
         .as-page__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-page__health-grid { grid-template-columns: 1fr; }
       }
-      @media (max-width: 650px) {
+      @media (max-width: 700px) {
         .as-page__panel-header { flex-direction: column; }
-        .as-page__metrics, .as-page__grid { grid-template-columns: 1fr; }
-        .as-page__field { flex-basis: 100%; }
+        .as-page__metrics, .as-page__feed-summary { grid-template-columns: 1fr; }
+        .as-page__actions { width: 100%; justify-content: flex-start; }
       }
     </style>
+
     <div class="as-page">
       <section class="as-page__hero">
         <div class="as-page__copy">
@@ -185,10 +162,10 @@ export default RouteTemplate(
         </section>
 
         {{#if @controller.overallReasonText}}
-          <div class="as-page__warning"><strong>{{i18n "admin.account_security.health.reason"}}:</strong> {{@controller.overallReasonText}}</div>
+          <div class="as-page__warning" role="alert"><strong>{{i18n "admin.account_security.health.reason"}}:</strong> {{@controller.overallReasonText}}</div>
         {{/if}}
 
-        <section class="as-page__grid">
+        <section class="as-page__health-grid">
           <div class="as-page__panel">
             <div class="as-page__section-title"><h2>{{i18n "admin.account_security.health.configuration"}}</h2></div>
             <div class="as-page__stack">
@@ -201,24 +178,38 @@ export default RouteTemplate(
               <div><strong>{{i18n "admin.account_security.health.temporary_blocks"}}:</strong> {{@controller.data.configuration.temporary_ip_blocks_enabled}}</div>
             </div>
           </div>
+
           <div class="as-page__panel">
             <div class="as-page__section-title"><h2>{{i18n "admin.account_security.health.feeds"}}</h2></div>
             <div class="as-page__stack">
-              <div><strong>Tor:</strong> {{@controller.data.feeds.tor.status}} / {{@controller.data.feeds.tor.entry_count}}</div>
-              <div><strong>AbuseIPDB blacklist:</strong> {{@controller.data.feeds.abuseipdb_blacklist.status}} / {{@controller.data.feeds.abuseipdb_blacklist.entry_count}}</div>
-              <div class="as-page__buttons">
-                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncTorFeed}}>{{i18n "admin.account_security.health.sync_tor"}}</button>
-                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncBlacklistFeed}}>{{i18n "admin.account_security.health.sync_blacklist"}}</button>
+              <div class="as-page__feed-summary">
+                <div class="as-page__item">
+                  <div class="as-page__label">Tor</div>
+                  <div class="as-page__status-block">
+                    <div class="as-page__value">{{@controller.data.feeds.tor.status}}</div>
+                    <div class="as-page__muted">{{@controller.data.feeds.tor.entry_count}} {{i18n "admin.account_security.health.entries"}}</div>
+                  </div>
+                </div>
+                <div class="as-page__item">
+                  <div class="as-page__label">AbuseIPDB blacklist</div>
+                  <div class="as-page__status-block">
+                    <div class="as-page__value">{{@controller.data.feeds.abuseipdb_blacklist.status}}</div>
+                    <div class="as-page__muted">{{@controller.data.feeds.abuseipdb_blacklist.entry_count}} {{i18n "admin.account_security.health.entries"}}</div>
+                  </div>
+                </div>
               </div>
-              <p class="as-page__hint">{{i18n "admin.account_security.health.sync_blacklist_hint"}}</p>
-              {{#if @controller.data.feed_sync}}
-                <div class="as-page__notice"><strong>{{i18n "admin.account_security.health.feed_sync_result"}}:</strong> {{@controller.data.feed_sync.source}} / {{@controller.data.feed_sync.success}} {{if @controller.data.feed_sync.error_code @controller.data.feed_sync.error_code ""}}</div>
+              <div class="as-page__buttons">
+                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncTorFeed}}>{{i18n "admin.account_security.health.sync_tor_short"}}</button>
+                <button class="btn" type="button" disabled={{@controller.syncingFeed}} {{on "click" @controller.syncBlacklistFeed}}>{{i18n "admin.account_security.health.sync_blacklist_short"}}</button>
+              </div>
+              <p class="as-page__hint as-page__hint--spaced">{{i18n "admin.account_security.health.sync_blacklist_hint"}}</p>
+              {{#if @controller.feedSyncAlert}}
+                <div class="as-page__alert {{if @controller.feedSyncAlert.success "as-page__alert--success" "as-page__alert--error"}}" role={{if @controller.feedSyncAlert.success "status" "alert"}}>
+                  <div class="as-page__alert-title">{{@controller.feedSyncAlert.title}}</div>
+                  <div>{{@controller.feedSyncAlert.message}}</div>
+                </div>
               {{/if}}
             </div>
-          </div>
-          <div class="as-page__panel">
-            <div class="as-page__section-title"><h2>{{i18n "admin.account_security.health.privacy"}}</h2></div>
-            <p class="as-page__muted">{{i18n "admin.account_security.health.privacy_text"}}</p>
           </div>
         </section>
 
@@ -233,8 +224,11 @@ export default RouteTemplate(
               <button class="btn" type="button" {{on "click" @controller.resetCircuit}}>{{i18n "admin.account_security.health.reset_circuit"}}</button>
             </div>
           </div>
-          {{#if @controller.data.test_result}}
-            <div class="as-page__notice"><strong>{{i18n "admin.account_security.health.test_result"}}:</strong> {{@controller.data.test_result.success}} / {{if @controller.data.test_result.error_code @controller.data.test_result.error_code @controller.data.test_result.status}}</div>
+          {{#if @controller.testResultAlert}}
+            <div class="as-page__alert {{if @controller.testResultAlert.success "as-page__alert--success" "as-page__alert--error"}}" role={{if @controller.testResultAlert.success "status" "alert"}}>
+              <div class="as-page__alert-title">{{@controller.testResultAlert.title}}</div>
+              <div>{{@controller.testResultAlert.message}}</div>
+            </div>
           {{/if}}
         </section>
       {{else}}
