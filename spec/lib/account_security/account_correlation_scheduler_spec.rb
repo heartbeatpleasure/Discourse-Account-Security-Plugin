@@ -10,9 +10,11 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     SiteSetting.account_security_account_correlation_enabled = true
     SiteSetting.account_security_correlation_auto_scan_frequency = "monthly"
     SiteSetting.account_security_correlation_auto_scan_time = "03:00"
-    SiteSetting.account_security_correlation_auto_scan_timezone = "Europe/Amsterdam"
+    SiteSetting.account_security_correlation_auto_scan_timezone = "America/New_York"
     SiteSetting.account_security_correlation_auto_scan_day_of_month = 1
     SiteSetting.account_security_correlation_auto_scan_weekday = "sunday"
+    SiteSetting.site_contact_username = admin.username
+    admin.user_option.update!(timezone: "Europe/Amsterdam")
     PluginStore.remove(AccountSecurity::STORE_NAMESPACE, described_class.last_slot_key)
   end
 
@@ -20,13 +22,18 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     PluginStore.remove(AccountSecurity::STORE_NAMESPACE, described_class.last_slot_key)
   end
 
-  it "interprets the configured clock time in the saved schedule timezone" do
+  it "uses the site-contact Discourse timezone as the canonical wall clock for settings" do
     now = Time.utc(2026, 8, 17, 21, 0)
 
-    expect(described_class.frequency).to eq("monthly")
+    expect(described_class.timezone).to eq("Europe/Amsterdam")
     expect(described_class.latest_slot(now)).to eq(Time.utc(2026, 8, 1, 1, 0))
     expect(described_class.next_slot(now)).to eq(Time.utc(2026, 9, 1, 1, 0))
-    expect(described_class.schedule_status(now: now)[:timezone]).to eq("Europe/Amsterdam")
+  end
+
+  it "uses the hidden legacy timezone only when no site-contact timezone is available" do
+    SiteSetting.site_contact_username = ""
+
+    expect(described_class.timezone).to eq("America/New_York")
   end
 
   it "uses timezone-aware calendar arithmetic across weekly quarterly and yearly cadences" do
@@ -54,7 +61,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     expect(result[:enqueued]).to eq(false)
   end
 
-  it "separates last-run slots when cadence time or timezone changes" do
+  it "separates last-run slots when cadence time or the site schedule timezone changes" do
     first_key = described_class.last_slot_key
     described_class.store_last_slot(Time.utc(2026, 8, 1, 1, 0))
 
@@ -63,7 +70,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     expect(time_key).not_to eq(first_key)
     expect(described_class.last_slot).to be_nil
 
-    SiteSetting.account_security_correlation_auto_scan_timezone = "America/New_York"
+    admin.user_option.update!(timezone: "America/New_York")
     timezone_key = described_class.last_slot_key
     expect(timezone_key).not_to eq(time_key)
     expect(described_class.last_slot).to be_nil
@@ -71,22 +78,5 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     [first_key, time_key, timezone_key].compact.each do |key|
       PluginStore.remove(AccountSecurity::STORE_NAMESPACE, key)
     end
-  end
-
-  it "persists a schedule together with the timezone of the administrator who saved it" do
-    status = described_class.update!(
-      frequency: "weekly",
-      send_time: "11:30",
-      weekday: "monday",
-      day_of_month: 7,
-      timezone: "Europe/Amsterdam",
-      actor: admin,
-    )
-
-    expect(SiteSetting.account_security_correlation_auto_scan_frequency).to eq("weekly")
-    expect(SiteSetting.account_security_correlation_auto_scan_time).to eq("11:30")
-    expect(SiteSetting.account_security_correlation_auto_scan_weekday).to eq("monday")
-    expect(SiteSetting.account_security_correlation_auto_scan_timezone).to eq("Europe/Amsterdam")
-    expect(status[:timezone]).to eq("Europe/Amsterdam")
   end
 end

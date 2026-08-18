@@ -73,4 +73,24 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     expect(pairs).not_to include([user_a.id, user_b.id].sort)
   end
 
+  it "includes existing correlation rows in full scans so scoring upgrades are persisted" do
+    user_a = Fabricate(:user)
+    user_b = Fabricate(:user)
+    correlation = AccountSecurity::AccountCorrelation.create!(
+      user_a_id: [user_a.id, user_b.id].min,
+      user_b_id: [user_a.id, user_b.id].max,
+      score: 1,
+      confidence: "weak",
+      status: "open",
+      evidence: {},
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    pairs, _truncated, _index, _context, diagnostics = described_class.candidate_pairs
+
+    expect(pairs).to include([correlation.user_a_id, correlation.user_b_id])
+    expect(diagnostics[:existing_pairs_added]).to be >= 1
+  end
+
 end

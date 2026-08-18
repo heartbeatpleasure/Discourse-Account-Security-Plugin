@@ -3,39 +3,27 @@ import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { userPath } from "discourse/lib/url";
 import { i18n } from "discourse-i18n";
-import {
-  accountSecurityUserTimezone,
-  formatAccountSecurityDateTime,
-} from "../../lib/account-security-date";
+import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
 
 export default class AdminPluginsAccountSecurityCorrelationsController extends Controller {
   @tracked data;
   @tracked isLoading = false;
   @tracked isScanning = false;
-  @tracked isSavingSchedule = false;
   @tracked status = "";
   @tracked confidence = "";
   @tracked search = "";
   @tracked page = 1;
-  @tracked scheduleFrequency = "monthly";
-  @tracked scheduleTime = "03:00";
-  @tracked scheduleWeekday = "sunday";
-  @tracked scheduleDayOfMonth = 1;
 
   resetState() {
     this.data = undefined;
     this.isLoading = false;
     this.isScanning = false;
-    this.isSavingSchedule = false;
     this.status = "";
     this.confidence = "";
     this.search = "";
     this.page = 1;
-    this.scheduleFrequency = "monthly";
-    this.scheduleTime = "03:00";
-    this.scheduleWeekday = "sunday";
-    this.scheduleDayOfMonth = 1;
   }
 
   sourceLabel(source) {
@@ -132,6 +120,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     }
     return {
       ...user,
+      profile_url: userPath(user.username),
       created_at_display: formatAccountSecurityDateTime(user.created_at),
       last_seen_at_display: formatAccountSecurityDateTime(user.last_seen_at),
     };
@@ -217,6 +206,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ["diagnostics_network_pairs", diagnostics.network_pairs_added],
       ["diagnostics_signature_pairs", diagnostics.signature_pairs_added],
       ["diagnostics_large_groups", diagnostics.large_ip_groups_skipped],
+      ["diagnostics_existing_pairs", diagnostics.existing_pairs_added],
       ["diagnostics_total_pairs", diagnostics.total_candidate_pairs],
     ].map(([key, value]) => ({
       label: i18n(`admin.account_security.correlations.${key}`),
@@ -245,18 +235,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       return null;
     }
 
-    const allowed = ["off", "weekly", "monthly", "quarterly", "yearly"];
-    const key = allowed.includes(schedule.frequency) ? schedule.frequency : "monthly";
-
     return {
       ...schedule,
-      frequency_label: i18n(
-        `admin.account_security.correlations.frequencies.${key}`
-      ),
       next_run_at_display: formatAccountSecurityDateTime(schedule.next_run_at),
-      last_scheduled_at_display: formatAccountSecurityDateTime(
-        schedule.last_scheduled_at
-      ),
     };
   }
 
@@ -270,6 +251,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       account = {
         id: user.id,
         username: user.username,
+        profile_url: user.profile_url,
         sources: new Set(),
       };
       group.accounts.set(user.id, account);
@@ -332,12 +314,14 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
             account.sources.has("active_session")
         ).length;
         const visibleCount = accounts.length;
+        const pairs = items.filter((item) => group.pair_ids.has(item.id));
 
         return {
           ...group,
           accounts,
+          pairs,
           visible_account_count: visibleCount,
-          pair_count: group.pair_ids.size,
+          pair_count: pairs.length,
           registration_account_count: registrationAccounts,
           auth_account_count: authAccounts,
           account_count_label: i18n(
@@ -355,7 +339,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
                 }),
           pair_count_label: i18n(
             "admin.account_security.correlations.group_pair_count",
-            { count: group.pair_ids.size }
+            { count: pairs.length }
           ),
         };
       })
@@ -373,23 +357,19 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     }
 
     const items = (data.items || []).map((item) => this.decorateItem(item));
+    const sharedIpGroups = this.buildSharedIpGroups(items);
+    const groupedPairIds = new Set(
+      sharedIpGroups.flatMap((group) => group.pairs.map((item) => item.id))
+    );
+
     return {
       ...data,
       scan: this.decorateScan(data.scan),
       schedule: this.decorateSchedule(data.schedule),
       items,
-      shared_ip_groups: this.buildSharedIpGroups(items),
+      shared_ip_groups: sharedIpGroups,
+      ungrouped_items: items.filter((item) => !groupedPairIds.has(item.id)),
     };
-  }
-
-  syncScheduleForm(schedule) {
-    if (!schedule) {
-      return;
-    }
-    this.scheduleFrequency = schedule.frequency || "monthly";
-    this.scheduleTime = schedule.time || "03:00";
-    this.scheduleWeekday = schedule.weekday || "sunday";
-    this.scheduleDayOfMonth = Number(schedule.day_of_month || 1);
   }
 
   @action
@@ -405,7 +385,6 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         },
       });
       this.data = this.decorateData(data);
-      this.syncScheduleForm(this.data.schedule);
     } catch (error) {
       popupAjaxError(error);
     } finally {
@@ -416,54 +395,6 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @action setStatus(event) { this.status = event.target.value; }
   @action setConfidence(event) { this.confidence = event.target.value; }
   @action setSearch(event) { this.search = event.target.value; }
-  @action setScheduleFrequency(event) { this.scheduleFrequency = event.target.value; }
-  @action setScheduleTime(event) { this.scheduleTime = event.target.value; }
-  @action setScheduleWeekday(event) { this.scheduleWeekday = event.target.value; }
-  @action setScheduleDay(event) { this.scheduleDayOfMonth = Number(event.target.value); }
-
-  get scheduleEnabled() {
-    return this.scheduleFrequency !== "off";
-  }
-
-  get scheduleIsWeekly() {
-    return this.scheduleFrequency === "weekly";
-  }
-
-  get scheduleUsesDayOfMonth() {
-    return ["monthly", "quarterly", "yearly"].includes(this.scheduleFrequency);
-  }
-
-  @action
-  async saveSchedule() {
-    this.isSavingSchedule = true;
-    try {
-      const response = await ajax(
-        "/admin/plugins/account-security/correlations/schedule.json",
-        {
-          type: "PUT",
-          data: {
-            frequency: this.scheduleFrequency,
-            time: this.scheduleTime,
-            weekday: this.scheduleWeekday,
-            day_of_month: this.scheduleDayOfMonth,
-            timezone: accountSecurityUserTimezone(),
-          },
-        }
-      );
-      if (this.data) {
-        this.data = {
-          ...this.data,
-          schedule: this.decorateSchedule(response.schedule),
-        };
-      }
-      this.syncScheduleForm(this.data?.schedule);
-    } catch (error) {
-      popupAjaxError(error);
-    } finally {
-      this.isSavingSchedule = false;
-    }
-  }
-
   @action
   applyFilters() {
     this.page = 1;

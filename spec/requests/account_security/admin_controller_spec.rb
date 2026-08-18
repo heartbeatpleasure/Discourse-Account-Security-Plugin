@@ -19,7 +19,6 @@ RSpec.describe AccountSecurity::AdminController do
       [:delete, "/admin/plugins/account-security/events/1/notification-suppression.json", {}],
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/correlations.json", {}],
-      [:put, "/admin/plugins/account-security/correlations/schedule.json", { frequency: "weekly", time: "11:00", weekday: "monday", day_of_month: 1, timezone: "Europe/Amsterdam" }],
       [:put, "/admin/plugins/account-security/correlations/1.json", { status: "monitor" }],
       [:post, "/admin/plugins/account-security/correlations/rebuild.json", {}],
       [:get, "/admin/plugins/account-security/trusted-networks.json", {}],
@@ -50,26 +49,13 @@ RSpec.describe AccountSecurity::AdminController do
     expect(AccountSecurity::ProviderReport.count).to eq(0)
   end
 
-  it "saves automatic correlation schedules in the administrator supplied IANA timezone" do
-    SiteSetting.account_security_enabled = true
-    SiteSetting.account_security_account_correlation_enabled = true
+  it "does not expose a second account-correlation schedule mutation endpoint" do
     sign_in(admin)
 
     put "/admin/plugins/account-security/correlations/schedule.json",
-        params: {
-          frequency: "weekly",
-          time: "11:00",
-          weekday: "monday",
-          day_of_month: 1,
-          timezone: "Europe/Amsterdam",
-        }
+        params: { frequency: "weekly", time: "11:00", weekday: "monday" }
 
-    expect(response.status).to eq(200)
-    payload = response.parsed_body
-    expect(payload.dig("schedule", "frequency")).to eq("weekly")
-    expect(payload.dig("schedule", "timezone")).to eq("Europe/Amsterdam")
-    expect(SiteSetting.account_security_correlation_auto_scan_time).to eq("11:00")
-    expect(SiteSetting.account_security_correlation_auto_scan_timezone).to eq("Europe/Amsterdam")
+    expect(response.status).to eq(404)
   end
 
   it "requires explicit confirmation before classifying a correlation as a confirmed duplicate" do

@@ -145,6 +145,7 @@ module ::AccountSecurity
       registration_delta = ((user_a.created_at - user_b.created_at).abs / 60).round
 
       {
+        "scoring_version" => AccountCorrelationPolicy::SCORING_VERSION,
         "shared_registration_ip" => registration_details.any?,
         "shared_registration_ip_public" => registration_details.any? { |detail| detail["public"] == true && detail["trusted"] != true },
         "shared_registration_ip_nonpublic" => registration_details.any? { |detail| detail["public"] != true },

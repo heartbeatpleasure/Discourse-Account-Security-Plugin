@@ -7,90 +7,156 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
     SiteSetting.account_security_correlation_min_score = 40
   end
 
-  it "keeps one exact public registration IP as a review candidate" do
+  it "treats one clean public IP with authentication evidence as moderate rather than weak" do
     evidence = {
       "shared_exact_ip_count" => 1,
-      "untrusted_public_ip_count" => 1,
-      "shared_registration_ip_public" => true,
-      "max_shared_exact_ip_users" => 2,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+        },
+      ],
     }
 
     result = described_class.score_with_breakdown(evidence)
 
-    expect(result[:score]).to eq(48)
-    expect(described_class.store_candidate?(result[:score], evidence)).to eq(true)
+    expect(result[:score]).to eq(38)
     expect(described_class.confidence(result[:score])).to eq("moderate")
+    expect(described_class.store_candidate?(result[:score], evidence)).to eq(true)
   end
 
-  it "assigns non-zero evidence to one exact non-public IP without overstating confidence" do
+  it "keeps a single non-public exact IP visible but low confidence" do
     evidence = {
       "shared_exact_ip_count" => 1,
-      "shared_nonpublic_ip_count" => 1,
-      "max_shared_exact_ip_users" => 2,
+      "shared_ip_details" => [
+        {
+          "public" => false,
+          "user_count" => 5,
+          "sources_a" => ["current"],
+          "sources_b" => ["current"],
+        },
+      ],
     }
 
     score = described_class.score(evidence)
 
-    expect(score).to eq(14)
+    expect(score).to eq(6)
     expect(described_class.confidence(score)).to eq("weak")
     expect(described_class.store_candidate?(score, evidence)).to eq(true)
   end
 
-  it "raises a repeated non-public registration and authentication match to moderate review priority" do
+  it "rates a public shared IP plus registration authentication and nearby registration time as strong" do
     evidence = {
-      "shared_exact_ip_count" => 1,
-      "shared_nonpublic_ip_count" => 1,
-      "shared_registration_ip_nonpublic" => true,
-      "same_current_ip_nonpublic" => true,
-      "shared_auth_ip_count" => 1,
-      "registration_delta_minutes" => 200 * 24 * 60,
-      "max_shared_exact_ip_users" => 5,
+      "shared_exact_ip_count" => 2,
+      "registration_delta_minutes" => 2.days.to_i / 60,
+      "shared_ip_details" => [
+        {
+          "ip_address" => "84.106.2.103",
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session", "registration"],
+        },
+        {
+          "ip_address" => "10.0.3.1",
+          "public" => false,
+          "user_count" => 5,
+          "sources_a" => %w[current auth_session active_session],
+          "sources_b" => %w[current auth_session active_session],
+        },
+      ],
     }
 
-    score = described_class.score(evidence)
+    result = described_class.score_with_breakdown(evidence)
 
-    expect(score).to be >= 40
-    expect(described_class.confidence(score)).to eq("moderate")
-    expect(described_class.store_candidate?(score, evidence)).to eq(true)
+    expect(result[:score]).to eq(60)
+    expect(described_class.confidence(result[:score])).to eq("strong")
   end
 
-  it "raises confidence when several independent exact IPs agree" do
+  it "makes multiple independent public IP matches very strong when sources corroborate them" do
     evidence = {
-      "shared_exact_ip_count" => 3,
-      "untrusted_public_ip_count" => 3,
-      "shared_registration_ip_public" => true,
-      "shared_core_history_ip_count" => 2,
-      "shared_session_signature_count" => 1,
+      "shared_exact_ip_count" => 2,
       "registration_delta_minutes" => 30,
-      "max_shared_exact_ip_users" => 2,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => %w[registration auth_session],
+          "sources_b" => %w[registration auth_session],
+        },
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => %w[history auth_session],
+          "sources_b" => %w[history auth_session],
+        },
+      ],
     }
 
     score = described_class.score(evidence)
 
-    expect(score).to eq(100)
+    expect(score).to be >= 75
     expect(described_class.confidence(score)).to eq("very_strong")
   end
 
-  it "reduces identity confidence for Tor context without hiding the exact-IP pair" do
-    base = {
-      "shared_exact_ip_count" => 1,
-      "untrusted_public_ip_count" => 1,
-      "shared_registration_ip_public" => true,
-      "max_shared_exact_ip_users" => 5,
+  it "applies shared-address popularity only to the public IP that is actually popular" do
+    evidence = {
+      "shared_exact_ip_count" => 2,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+        },
+        {
+          "public" => false,
+          "user_count" => 20,
+          "sources_a" => ["current"],
+          "sources_b" => ["current"],
+        },
+      ],
     }
 
-    ordinary = described_class.score(base)
-    contextual = described_class.score(base.merge("tor_shared_ip_count" => 1))
+    result = described_class.score_with_breakdown(evidence)
+    popularity = result[:breakdown].find { |entry| entry["key"] == "shared_ip_popularity" }
 
-    expect(contextual).to be < ordinary
-    expect(described_class.store_candidate?(contextual, base)).to eq(true)
+    expect(result[:score]).to eq(44)
+    expect(popularity).to be_nil
+  end
+
+  it "reduces Tor public-IP weight without hiding the exact-IP pair" do
+    ordinary = {
+      "shared_exact_ip_count" => 1,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+        },
+      ],
+    }
+    tor = Marshal.load(Marshal.dump(ordinary))
+    tor["shared_ip_details"][0]["tor"] = true
+
+    expect(described_class.score(tor)).to be < described_class.score(ordinary)
+    expect(described_class.store_candidate?(described_class.score(tor), tor)).to eq(true)
   end
 
   it "uses browser continuity only as positive evidence and never penalizes its absence" do
     base = {
       "shared_exact_ip_count" => 1,
-      "untrusted_public_ip_count" => 1,
-      "max_shared_exact_ip_users" => 2,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+        },
+      ],
     }
 
     without_continuity = described_class.score(base)
@@ -115,18 +181,31 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
     expect(described_class.store_candidate?(score, browser_only)).to eq(false)
   end
 
-  it "keeps a public registration IP shared by five accounts moderate while showing the shared context" do
+  it "keeps a public registration IP shared by five accounts moderate unless other evidence corroborates it" do
     evidence = {
       "shared_exact_ip_count" => 1,
-      "untrusted_public_ip_count" => 1,
-      "shared_registration_ip_public" => true,
-      "max_shared_exact_ip_users" => 5,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 5,
+          "sources_a" => ["registration"],
+          "sources_b" => ["registration"],
+        },
+      ],
     }
 
     score = described_class.score(evidence)
 
-    expect(score).to eq(45)
-    expect(described_class.store_candidate?(score, evidence)).to eq(true)
+    expect(score).to eq(36)
     expect(described_class.confidence(score)).to eq("moderate")
+  end
+
+  it "uses evidence-oriented confidence bands instead of treating scores in the thirties as weak" do
+    expect(described_class.confidence(24)).to eq("weak")
+    expect(described_class.confidence(25)).to eq("moderate")
+    expect(described_class.confidence(49)).to eq("moderate")
+    expect(described_class.confidence(50)).to eq("strong")
+    expect(described_class.confidence(74)).to eq("strong")
+    expect(described_class.confidence(75)).to eq("very_strong")
   end
 end

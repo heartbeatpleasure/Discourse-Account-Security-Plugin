@@ -162,6 +162,22 @@ module ::AccountSecurity
         diagnostics.merge!(scan_context.diagnostics)
       end
 
+      # Existing rows may have been created under an older scoring model. Include
+      # them in every full scan so a policy upgrade also refreshes persisted scores
+      # and explanations, even if the original candidate source is no longer active.
+      existing_pairs_added = 0
+      if pairs.length < MAX_PAIR_CANDIDATES
+        remaining = MAX_PAIR_CANDIDATES - pairs.length
+        AccountCorrelation.order(:id).limit(remaining + 1_000).pluck(:user_a_id, :user_b_id).each do |user_a_id, user_b_id|
+          break if pairs.length >= MAX_PAIR_CANDIDATES
+          pair = [user_a_id.to_i, user_b_id.to_i].sort
+          next if pair.first <= 0 || pair.first == pair.last || pairs.include?(pair)
+          pairs << pair
+          existing_pairs_added += 1
+        end
+      end
+      diagnostics[:existing_pairs_added] = existing_pairs_added
+
       if pairs.length > MAX_PAIR_CANDIDATES
         pairs = Set.new(pairs.to_a.first(MAX_PAIR_CANDIDATES))
         truncated = true

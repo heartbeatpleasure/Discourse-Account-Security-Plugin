@@ -1,7 +1,8 @@
-import { fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import RouteTemplate from "ember-route-template";
+import AccountSecurityCorrelationPair from "../../components/account-security-correlation-pair";
 import getURL from "discourse/lib/get-url";
+import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
 const overviewUrl = getURL("/admin/plugins/account-security");
@@ -135,13 +136,6 @@ export default RouteTemplate(
       .as-correlation__diagnostic .as-correlation__value {
         font-variant-numeric: tabular-nums;
       }
-      .as-correlation__schedule-editor {
-        display: grid;
-        grid-template-columns: minmax(170px, 1fr) minmax(145px, .75fr) minmax(170px, 1fr) minmax(135px, .65fr) auto;
-        align-items: end;
-        gap: .75rem;
-        margin-top: .9rem;
-      }
       .as-correlation__schedule-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         margin-top: .85rem;
@@ -194,16 +188,28 @@ export default RouteTemplate(
       }
       .as-correlation__group-summary::-webkit-details-marker,
       .as-correlation__candidate-summary-line::-webkit-details-marker { display: none; }
-      .as-correlation__group-summary::before,
-      .as-correlation__candidate-summary-line::before {
-        content: "▸";
-        flex: 0 0 auto;
+      .as-correlation__disclosure-icon {
+        display: inline-flex;
+        width: 1.9rem;
+        height: 1.9rem;
+        flex: 0 0 1.9rem;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--as-border);
+        border-radius: 999px;
+        background: var(--secondary);
         color: var(--as-muted);
-        font-size: var(--font-up-1);
-        transition: transform .15s ease;
+        transition: transform .15s ease, background .15s ease, color .15s ease;
       }
-      details[open] > .as-correlation__group-summary::before,
-      details[open] > .as-correlation__candidate-summary-line::before { transform: rotate(90deg); }
+      .as-correlation__disclosure-icon .d-icon {
+        width: .8rem;
+        height: .8rem;
+      }
+      details[open] > summary .as-correlation__disclosure-icon {
+        transform: rotate(90deg);
+        background: var(--tertiary-very-low);
+        color: var(--tertiary);
+      }
       .as-correlation__summary-main {
         display: flex;
         min-width: 0;
@@ -238,7 +244,7 @@ export default RouteTemplate(
       }
       .as-correlation__group-accounts {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: .6rem;
         margin-top: .75rem;
       }
@@ -248,7 +254,27 @@ export default RouteTemplate(
         border-radius: 10px;
         background: var(--secondary);
       }
+      .as-correlation__user-link {
+        color: var(--primary);
+        font-weight: 700;
+        text-decoration: none;
+        overflow-wrap: anywhere;
+      }
+      .as-correlation__user-link:hover {
+        color: var(--tertiary);
+        text-decoration: underline;
+      }
       .as-correlation__group-account strong { overflow-wrap: anywhere; }
+      .as-correlation__group-pairs {
+        margin-top: .9rem;
+        padding-top: .85rem;
+        border-top: 1px solid var(--as-border);
+      }
+      .as-correlation__group-pairs-header {
+        display: grid;
+        gap: .2rem;
+        margin-bottom: .65rem;
+      }
       .as-correlation__group-account .as-correlation__muted {
         margin-top: .25rem;
         font-size: var(--font-down-1);
@@ -393,7 +419,6 @@ export default RouteTemplate(
         color: var(--as-muted);
       }
       @media (max-width: 1150px) {
-        .as-correlation__schedule-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       }
@@ -402,6 +427,7 @@ export default RouteTemplate(
         .as-correlation__diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__filters { grid-template-columns: 1fr 1fr; }
         .as-correlation__candidate-meta { grid-template-columns: 1fr; }
+        .as-correlation__group-accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 700px) {
         .as-correlation__hero,
@@ -410,11 +436,11 @@ export default RouteTemplate(
         .as-correlation__badges { justify-content: flex-start; margin-left: 0; }
         .as-correlation__metrics,
         .as-correlation__schedule-summary,
-        .as-correlation__schedule-editor,
         .as-correlation__filters,
         .as-correlation__accounts-grid { grid-template-columns: 1fr; }
         .as-correlation__group-summary,
         .as-correlation__candidate-summary-line { align-items: flex-start; }
+        .as-correlation__group-accounts { grid-template-columns: 1fr; }
       }
       @media (max-width: 520px) {
         .as-correlation__compact-grid,
@@ -453,65 +479,26 @@ export default RouteTemplate(
           <button class="btn btn-primary" type="button" disabled={{@controller.scanBusy}} {{on "click" @controller.rebuild}}>{{i18n "admin.account_security.correlations.scan"}}</button>
         </div>
 
+        {{#if @controller.data.scoring_refresh_required}}
+          <div class="as-correlation__notice" style="margin-top: .9rem;">{{i18n "admin.account_security.correlations.scoring_refresh_required"}}</div>
+        {{/if}}
+
         <div class="as-correlation__scan-stack">
           <div class="as-correlation__subpanel">
             <div class="as-correlation__panel-header">
               <div class="as-correlation__copy">
                 <h3>{{i18n "admin.account_security.correlations.automatic_scans"}}</h3>
-                <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.automatic_scans_description"}}</p>
+                <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.automatic_scans_settings_only"}}</p>
               </div>
               <a class="btn" href={{settingsUrl}}>{{i18n "admin.account_security.open_settings"}}</a>
             </div>
 
             {{#if @controller.data.schedule}}
-              <div class="as-correlation__schedule-editor">
-                <div class="as-correlation__field">
-                  <label for="as-correlation-frequency">{{i18n "admin.account_security.correlations.schedule_frequency"}}</label>
-                  <select id="as-correlation-frequency" value={{@controller.scheduleFrequency}} {{on "change" @controller.setScheduleFrequency}}>
-                    <option value="off">{{i18n "admin.account_security.correlations.frequencies.off"}}</option>
-                    <option value="weekly">{{i18n "admin.account_security.correlations.frequencies.weekly"}}</option>
-                    <option value="monthly">{{i18n "admin.account_security.correlations.frequencies.monthly"}}</option>
-                    <option value="quarterly">{{i18n "admin.account_security.correlations.frequencies.quarterly"}}</option>
-                    <option value="yearly">{{i18n "admin.account_security.correlations.frequencies.yearly"}}</option>
-                  </select>
-                </div>
-
-                {{#if @controller.scheduleEnabled}}
-                  <div class="as-correlation__field">
-                    <label for="as-correlation-time">{{i18n "admin.account_security.correlations.schedule_time"}}</label>
-                    <input id="as-correlation-time" type="time" value={{@controller.scheduleTime}} {{on "input" @controller.setScheduleTime}} />
-                  </div>
-                {{/if}}
-
-                {{#if @controller.scheduleIsWeekly}}
-                  <div class="as-correlation__field">
-                    <label for="as-correlation-weekday">{{i18n "admin.account_security.correlations.schedule_weekday"}}</label>
-                    <select id="as-correlation-weekday" value={{@controller.scheduleWeekday}} {{on "change" @controller.setScheduleWeekday}}>
-                      <option value="monday">{{i18n "admin.account_security.correlations.weekdays.monday"}}</option>
-                      <option value="tuesday">{{i18n "admin.account_security.correlations.weekdays.tuesday"}}</option>
-                      <option value="wednesday">{{i18n "admin.account_security.correlations.weekdays.wednesday"}}</option>
-                      <option value="thursday">{{i18n "admin.account_security.correlations.weekdays.thursday"}}</option>
-                      <option value="friday">{{i18n "admin.account_security.correlations.weekdays.friday"}}</option>
-                      <option value="saturday">{{i18n "admin.account_security.correlations.weekdays.saturday"}}</option>
-                      <option value="sunday">{{i18n "admin.account_security.correlations.weekdays.sunday"}}</option>
-                    </select>
-                  </div>
-                {{/if}}
-
-                {{#if @controller.scheduleUsesDayOfMonth}}
-                  <div class="as-correlation__field">
-                    <label for="as-correlation-day">{{i18n "admin.account_security.correlations.schedule_day"}}</label>
-                    <input id="as-correlation-day" type="number" min="1" max="28" value={{@controller.scheduleDayOfMonth}} {{on "input" @controller.setScheduleDay}} />
-                  </div>
-                {{/if}}
-
-                <button class="btn btn-primary" type="button" disabled={{@controller.isSavingSchedule}} {{on "click" @controller.saveSchedule}}>{{i18n "admin.account_security.correlations.schedule_save"}}</button>
-              </div>
-              <p class="as-correlation__muted" style="margin-top: .55rem;">{{i18n "admin.account_security.correlations.schedule_local_time_hint"}}</p>
-
               <div class="as-correlation__schedule-summary">
-                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.schedule_next"}}</div><div class="as-correlation__value">{{@controller.data.schedule.next_run_at_display}}</div></div>
-                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.schedule_last"}}</div><div class="as-correlation__value">{{@controller.data.schedule.last_scheduled_at_display}}</div></div>
+                <div class="as-correlation__compact-item">
+                  <div class="as-correlation__label">{{i18n "admin.account_security.correlations.schedule_next"}}</div>
+                  <div class="as-correlation__value">{{@controller.data.schedule.next_run_at_display}}</div>
+                </div>
               </div>
             {{/if}}
           </div>
@@ -542,52 +529,6 @@ export default RouteTemplate(
           </div>
         </div>
       </section>
-
-      {{#if @controller.data.shared_ip_groups.length}}
-        <section class="as-correlation__panel">
-          <div class="as-correlation__copy">
-            <h2>{{i18n "admin.account_security.correlations.shared_ip_groups_title"}}</h2>
-            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.shared_ip_groups_description"}}</p>
-          </div>
-          <div class="as-correlation__group-list">
-            {{#each @controller.data.shared_ip_groups as |group|}}
-              <details class="as-correlation__group">
-                <summary class="as-correlation__group-summary">
-                  <div class="as-correlation__summary-main">
-                    <div class="as-correlation__summary-title">
-                      <span class="as-correlation__ip-address">{{group.ip_address}}</span>
-                      <strong>{{group.account_count_label}}</strong>
-                    </div>
-                    <span class="as-correlation__muted">{{group.coverage_label}} · {{group.pair_count_label}}</span>
-                  </div>
-                  <div class="as-correlation__badges">
-                    {{#unless group.public}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_nonpublic"}}</span>{{/unless}}
-                    {{#if group.tor}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_tor"}}</span>{{/if}}
-                    {{#if group.hosting}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_hosting"}}</span>{{/if}}
-                    {{#if group.mobile}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_mobile"}}</span>{{/if}}
-                    {{#if group.trusted}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_trusted"}}</span>{{/if}}
-                  </div>
-                </summary>
-                <div class="as-correlation__group-body">
-                  <div class="as-correlation__group-meta">
-                    <span>{{i18n "admin.account_security.correlations.group_registration_accounts" count=group.registration_account_count}}</span>
-                    <span>{{i18n "admin.account_security.correlations.group_auth_accounts" count=group.auth_account_count}}</span>
-                    <span>{{i18n "admin.account_security.correlations.ip_context"}}: {{group.context_display}}</span>
-                  </div>
-                  <div class="as-correlation__group-accounts">
-                    {{#each group.accounts as |account|}}
-                      <div class="as-correlation__group-account">
-                        <strong>{{account.username}}</strong>
-                        <div class="as-correlation__muted">{{account.sources_display}}</div>
-                      </div>
-                    {{/each}}
-                  </div>
-                </div>
-              </details>
-            {{/each}}
-          </div>
-        </section>
-      {{/if}}
 
       <section class="as-correlation__panel">
         <div class="as-correlation__filters">
@@ -620,131 +561,97 @@ export default RouteTemplate(
         </div>
       </section>
 
-      <section class="as-correlation__panel">
-        <div class="as-correlation__copy">
-          <h2>{{i18n "admin.account_security.correlations.pair_comparisons_title"}}</h2>
-          <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.pair_comparisons_description"}}</p>
-        </div>
-        {{#if @controller.data.items.length}}
-          <div class="as-correlation__candidate-list">
-            {{#each @controller.data.items as |item|}}
-              <details class="as-correlation__candidate">
-                <summary class="as-correlation__candidate-summary-line">
-                  <div class="as-correlation__summary-main">
-                    <div class="as-correlation__summary-title">
-                      <h3>{{if item.user_a item.user_a.username "—"}}</h3>
-                      <span class="as-correlation__pair-separator">↔</span>
-                      <h3>{{if item.user_b item.user_b.username "—"}}</h3>
-                    </div>
-                  </div>
-                  <div class="as-correlation__badges">
-                    <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{item.score}}</span>
-                    <span class="as-correlation__badge">{{item.confidence_label}}</span>
-                    <span class="as-correlation__badge">{{item.status_label}}</span>
-                  </div>
-                </summary>
-
-                <div class="as-correlation__candidate-body">
-                  <div class="as-correlation__accounts-grid">
-                    {{#if item.user_a}}
-                      <div class="as-correlation__account-card">
-                        <strong>{{item.user_a.username}}</strong>
-                        <div class="as-correlation__account-meta">
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.registered"}}</div><div class="as-correlation__value">{{item.user_a.created_at_display}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_last_seen"}}</div><div class="as-correlation__value">{{item.user_a.last_seen_at_display}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_active"}}</div><div class="as-correlation__value">{{if item.user_a.active (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_suspended"}}</div><div class="as-correlation__value">{{if item.user_a.suspended (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</div></div>
-                        </div>
+      {{#if @controller.data.items.length}}
+        {{#if @controller.data.shared_ip_groups.length}}
+          <section class="as-correlation__panel">
+            <div class="as-correlation__copy">
+              <h2>{{i18n "admin.account_security.correlations.shared_ip_groups_title"}}</h2>
+              <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.shared_ip_groups_description"}}</p>
+            </div>
+            <div class="as-correlation__group-list">
+              {{#each @controller.data.shared_ip_groups as |group|}}
+                <details class="as-correlation__group">
+                  <summary class="as-correlation__group-summary">
+                    <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
+                    <div class="as-correlation__summary-main">
+                      <div class="as-correlation__summary-title">
+                        <span class="as-correlation__ip-address">{{group.ip_address}}</span>
+                        <strong>{{group.account_count_label}}</strong>
                       </div>
-                    {{/if}}
-                    {{#if item.user_b}}
-                      <div class="as-correlation__account-card">
-                        <strong>{{item.user_b.username}}</strong>
-                        <div class="as-correlation__account-meta">
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.registered"}}</div><div class="as-correlation__value">{{item.user_b.created_at_display}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_last_seen"}}</div><div class="as-correlation__value">{{item.user_b.last_seen_at_display}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_active"}}</div><div class="as-correlation__value">{{if item.user_b.active (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</div></div>
-                          <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.account_suspended"}}</div><div class="as-correlation__value">{{if item.user_b.suspended (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</div></div>
-                        </div>
-                      </div>
-                    {{/if}}
-                  </div>
-
-                  <div class="as-correlation__candidate-meta">
-                    <div class="as-correlation__signal-box">
-                      <div class="as-correlation__label">{{i18n "admin.account_security.correlations.signals"}}</div>
-                      <div class="as-correlation__value">{{item.signal_summary}}</div>
-                      {{#if item.evidence.shared_networks.length}}<p class="as-correlation__muted" style="margin-top: .35rem;">{{item.evidence.shared_networks}}</p>{{/if}}
+                      <span class="as-correlation__muted">{{group.coverage_label}} · {{group.pair_count_label}}</span>
                     </div>
-                    <div class="as-correlation__time-box">
-                      <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.first_seen"}}</div><div class="as-correlation__value">{{item.first_seen_at_display}}</div></div>
-                      <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.last_seen"}}</div><div class="as-correlation__value">{{item.last_seen_at_display}}</div></div>
+                    <div class="as-correlation__badges">
+                      {{#unless group.public}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_nonpublic"}}</span>{{/unless}}
+                      {{#if group.tor}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_tor"}}</span>{{/if}}
+                      {{#if group.hosting}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_hosting"}}</span>{{/if}}
+                      {{#if group.mobile}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_mobile"}}</span>{{/if}}
+                      {{#if group.trusted}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_trusted"}}</span>{{/if}}
                     </div>
-                  </div>
-
-                  {{#if item.shared_ip_details.length}}
-                    <div class="as-correlation__evidence-title">
-                      <h4>{{i18n "admin.account_security.correlations.exact_ip_evidence"}}</h4>
-                      <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.exact_ip_evidence_description"}}</p>
+                  </summary>
+                  <div class="as-correlation__group-body">
+                    <div class="as-correlation__group-meta">
+                      <span>{{i18n "admin.account_security.correlations.group_registration_accounts" count=group.registration_account_count}}</span>
+                      <span>{{i18n "admin.account_security.correlations.group_auth_accounts" count=group.auth_account_count}}</span>
+                      <span>{{i18n "admin.account_security.correlations.ip_context"}}: {{group.context_display}}</span>
                     </div>
-                    <div class="as-correlation__ip-list">
-                      {{#each item.shared_ip_details as |detail|}}
-                        <div class="as-correlation__ip-card {{if detail.contextual "as-correlation__ip-card--contextual" ""}}">
-                          <div class="as-correlation__ip-address">{{detail.ip_address}}</div>
-                          <div class="as-correlation__ip-meta">
-                            <div><strong>{{detail.account_a_sources_label}}:</strong> {{detail.sources_a_display}}</div>
-                            <div><strong>{{detail.account_b_sources_label}}:</strong> {{detail.sources_b_display}}</div>
-                            <div><strong>{{i18n "admin.account_security.correlations.ip_context"}}:</strong> {{detail.context_display}}</div>
-                            <div>{{detail.seen_by_display}}</div>
-                          </div>
+                    <div class="as-correlation__group-accounts">
+                      {{#each group.accounts as |account|}}
+                        <div class="as-correlation__group-account">
+                          <a
+                            class="trigger-user-card as-correlation__user-link"
+                            data-user-card={{account.username}}
+                            href={{account.profile_url}}
+                          >{{account.username}}</a>
+                          <div class="as-correlation__muted">{{account.sources_display}}</div>
                         </div>
                       {{/each}}
                     </div>
-                  {{/if}}
-
-                  {{#if item.score_breakdown.length}}
-                    <div class="as-correlation__evidence-title">
-                      <h4>{{i18n "admin.account_security.correlations.score_explanation"}}</h4>
-                      <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.score_explanation_description"}}</p>
-                    </div>
-                    <div class="as-correlation__breakdown">
-                      {{#each item.score_breakdown as |entry|}}
-                        <div class="as-correlation__reason">
-                          <span>{{entry.label}}</span>
-                          <span class="as-correlation__points {{if entry.positive "as-correlation__points--positive" ""}} {{if entry.negative "as-correlation__points--negative" ""}}">{{entry.points_display}}</span>
+                    {{#if group.pairs.length}}
+                      <div class="as-correlation__group-pairs">
+                        <div class="as-correlation__group-pairs-header">
+                          <h3>{{i18n "admin.account_security.correlations.group_pair_comparisons"}}</h3>
+                          <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.group_pair_comparisons_description"}}</p>
                         </div>
-                      {{/each}}
-                    </div>
-                  {{/if}}
-
-                  {{#if item.evidence.browser_continuity_count}}
-                    <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.browser_continuity_note"}}</div>
-                  {{/if}}
-
-                  <div class="as-correlation__review">
-                    <div class="as-correlation__muted">{{item.status_label}}</div>
-                    <div class="as-correlation__buttons">
-                      <button class="btn btn-small" type="button" {{on "click" (fn @controller.review item "monitor")}}>{{i18n "admin.account_security.correlations.mark_monitor"}}</button>
-                      <button class="btn btn-small" type="button" {{on "click" (fn @controller.review item "expected_shared_network")}}>{{i18n "admin.account_security.correlations.mark_expected"}}</button>
-                      <button class="btn btn-small btn-danger" type="button" {{on "click" (fn @controller.review item "confirmed_duplicate")}}>{{i18n "admin.account_security.correlations.mark_duplicate"}}</button>
-                      <button class="btn btn-small" type="button" {{on "click" (fn @controller.review item "dismissed")}}>{{i18n "admin.account_security.correlations.mark_dismissed"}}</button>
-                      {{#if item.can_reopen}}<button class="btn btn-small" type="button" {{on "click" (fn @controller.review item "open")}}>{{i18n "admin.account_security.correlations.reopen"}}</button>{{/if}}
-                    </div>
+                        <div class="as-correlation__candidate-list">
+                          {{#each group.pairs as |item|}}
+                            <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
+                          {{/each}}
+                        </div>
+                      </div>
+                    {{/if}}
                   </div>
-                </div>
-              </details>
-            {{/each}}
-          </div>
+                </details>
+              {{/each}}
+            </div>
+          </section>
+        {{/if}}
 
+        {{#if @controller.data.ungrouped_items.length}}
+          <section class="as-correlation__panel">
+            <div class="as-correlation__copy">
+              <h2>{{if @controller.data.shared_ip_groups.length (i18n "admin.account_security.correlations.other_pair_comparisons_title") (i18n "admin.account_security.correlations.pair_comparisons_title")}}</h2>
+              <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.pair_comparisons_description"}}</p>
+            </div>
+            <div class="as-correlation__candidate-list">
+              {{#each @controller.data.ungrouped_items as |item|}}
+                <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
+              {{/each}}
+            </div>
+          </section>
+        {{/if}}
+
+        <section class="as-correlation__panel">
           <div class="as-correlation__pagination">
             <button class="btn" type="button" disabled={{unless @controller.hasPreviousPage true false}} {{on "click" @controller.previousPage}}>{{i18n "admin.account_security.correlations.previous"}}</button>
             <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.page"}} {{@controller.data.page}}</span>
             <button class="btn" type="button" disabled={{unless @controller.hasNextPage true false}} {{on "click" @controller.nextPage}}>{{i18n "admin.account_security.correlations.next"}}</button>
           </div>
-        {{else}}
-          <div class="as-correlation__empty" style="margin-top: .85rem;">{{if @controller.isLoading (i18n "admin.account_security.loading") (i18n "admin.account_security.no_data")}}</div>
-        {{/if}}
-      </section>
+        </section>
+      {{else}}
+        <section class="as-correlation__panel">
+          <div class="as-correlation__empty">{{if @controller.isLoading (i18n "admin.account_security.loading") (i18n "admin.account_security.no_data")}}</div>
+        </section>
+      {{/if}}
     </div>
   </template>
 );

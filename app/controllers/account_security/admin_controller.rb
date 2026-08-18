@@ -176,7 +176,6 @@ module ::AccountSecurity
     end
 
     def correlations
-      AccountCorrelationScheduler.ensure_timezone!(current_user.user_option&.timezone, actor: current_user)
       page = positive_integer_value(params[:page]) || 1
       per_page = 50
       status = params[:status].to_s
@@ -198,6 +197,10 @@ module ::AccountSecurity
       end
 
       total = scope.count
+      scoring_refresh_required = AccountCorrelation.where(
+        "COALESCE((evidence ->> 'scoring_version')::integer, 0) < ?",
+        AccountCorrelationPolicy::SCORING_VERSION,
+      ).exists?
       max_page = [(total.to_f / per_page).ceil, 1].max
       page = [page, max_page].min
       items = scope.offset((page - 1) * per_page).limit(per_page)
@@ -209,30 +212,13 @@ module ::AccountSecurity
         total: total,
         open_count: AccountCorrelation.where(status: "open").count,
         strong_open_count: AccountCorrelation.where(status: %w[open monitor], confidence: %w[strong very_strong]).count,
+        scoring_refresh_required: scoring_refresh_required,
         scan: AccountCorrelationScanner.status,
-        schedule: AccountCorrelationScheduler.schedule_status,
+        schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
         items: items.map { |item| serialize_correlation(item) },
       )
     end
 
-
-    def update_correlation_schedule
-      rate_limit!("correlation-schedule-update", 10, 10.minutes)
-      schedule = AccountCorrelationScheduler.update!(
-        frequency: params.require(:frequency),
-        send_time: params.require(:time),
-        weekday: params.require(:weekday),
-        day_of_month: params.require(:day_of_month),
-        timezone: clean_required(params.require(:timezone), 100, :timezone),
-        actor: current_user,
-      )
-      StaffAudit.log!(
-        actor: current_user,
-        action: "account_correlation_schedule_changed",
-        details: { frequency: schedule[:frequency] },
-      )
-      render_json_dump(success: true, schedule: schedule)
-    end
 
     def update_correlation
       rate_limit!("correlation-update", 20)
@@ -528,6 +514,7 @@ module ::AccountSecurity
         user_b: serialize_correlation_user(item.user_b),
         reviewed_by: item.reviewed_by && { id: item.reviewed_by.id, username: item.reviewed_by.username },
         evidence: {
+          scoring_version: evidence["scoring_version"].to_i,
           shared_registration_ip: evidence["shared_registration_ip"] == true,
           shared_registration_ip_public: evidence["shared_registration_ip_public"] == true,
           shared_registration_ip_nonpublic: evidence["shared_registration_ip_nonpublic"] == true,

@@ -73,39 +73,6 @@ module ::AccountSecurity
       }
     end
 
-    def ensure_timezone!(value, actor:)
-      configured = SiteSetting.account_security_correlation_auto_scan_timezone.to_s
-      return configured if valid_timezone?(configured)
-      return timezone unless valid_timezone?(value)
-
-      SiteSetting.set_and_log("account_security_correlation_auto_scan_timezone", value.to_s, actor)
-      value.to_s
-    end
-
-    def update!(frequency:, send_time:, weekday:, day_of_month:, timezone:, actor:)
-      frequency = frequency.to_s
-      send_time = send_time.to_s
-      weekday = weekday.to_s
-      day_of_month = Integer(day_of_month, exception: false)
-      timezone = timezone.to_s
-
-      raise Discourse::InvalidParameters.new(:frequency) unless FREQUENCIES.include?(frequency)
-      raise Discourse::InvalidParameters.new(:time) unless valid_send_time?(send_time)
-      raise Discourse::InvalidParameters.new(:weekday) unless WEEKDAYS.key?(weekday)
-      unless day_of_month && day_of_month.between?(1, 28)
-        raise Discourse::InvalidParameters.new(:day_of_month)
-      end
-      raise Discourse::InvalidParameters.new(:timezone) unless valid_timezone?(timezone)
-
-      set_setting!("account_security_correlation_auto_scan_frequency", frequency, actor)
-      set_setting!("account_security_correlation_auto_scan_time", send_time, actor)
-      set_setting!("account_security_correlation_auto_scan_weekday", weekday, actor)
-      set_setting!("account_security_correlation_auto_scan_day_of_month", day_of_month, actor)
-      set_setting!("account_security_correlation_auto_scan_timezone", timezone, actor)
-
-      schedule_status
-    end
-
     def enabled?
       SiteSetting.account_security_enabled &&
         SiteSetting.account_security_account_correlation_enabled &&
@@ -211,11 +178,14 @@ module ::AccountSecurity
     end
 
     def timezone
-      configured = SiteSetting.account_security_correlation_auto_scan_timezone.to_s
-      return configured if valid_timezone?(configured)
-
+      # The schedule is configured only through Installed Plugins -> Settings.
+      # Use the site-contact account timezone as the stable site-level wall clock;
+      # retain the hidden legacy value only as a compatibility fallback.
       contact = site_contact_timezone
       return contact if valid_timezone?(contact)
+
+      configured = SiteSetting.account_security_correlation_auto_scan_timezone.to_s
+      return configured if valid_timezone?(configured)
 
       DEFAULT_TIMEZONE
     end
@@ -259,10 +229,5 @@ module ::AccountSecurity
       "#{LAST_SLOT_KEY_PREFIX}:#{fingerprint}"
     end
 
-    def set_setting!(name, value, actor)
-      current = SiteSetting.public_send(name)
-      return if current.to_s == value.to_s
-      SiteSetting.set_and_log(name, value, actor)
-    end
   end
 end
