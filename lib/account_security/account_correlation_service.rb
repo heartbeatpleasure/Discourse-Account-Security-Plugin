@@ -134,6 +134,8 @@ module ::AccountSecurity
       registration_details = exact_details.select { |detail| both_source?(detail, "registration") }
       current_details = exact_details.select { |detail| both_source?(detail, "current") }
       history_details = exact_details.select { |detail| historical_source?(detail) }
+      core_history_details = exact_details.select { |detail| core_history_source?(detail) }
+      auth_details = exact_details.select { |detail| auth_source?(detail) }
       public_details = exact_details.select { |detail| detail["public"] == true }
       untrusted_public_details = public_details.reject { |detail| detail["trusted"] == true }
       nonpublic_details = exact_details.reject { |detail| detail["public"] == true }
@@ -148,12 +150,14 @@ module ::AccountSecurity
         "shared_registration_ip_nonpublic" => registration_details.any? { |detail| detail["public"] != true },
         "same_current_ip" => current_details.any?,
         "same_current_ip_public" => current_details.any? { |detail| detail["public"] == true && detail["trusted"] != true },
+        "same_current_ip_nonpublic" => current_details.any? { |detail| detail["public"] != true },
         "shared_exact_ip_count" => exact_details.length,
         "shared_public_ip_count" => public_details.length,
         "untrusted_public_ip_count" => untrusted_public_details.length,
         "shared_nonpublic_ip_count" => nonpublic_details.length,
         "shared_history_ip_count" => history_details.length,
-        "shared_auth_ip_count" => exact_details.count { |detail| auth_source?(detail) },
+        "shared_core_history_ip_count" => core_history_details.length,
+        "shared_auth_ip_count" => auth_details.length,
         "trusted_shared_ip_count" => trusted_details.length,
         "tor_shared_ip_count" => exact_details.count { |detail| detail["tor"] == true },
         "hosting_shared_ip_count" => exact_details.count { |detail| detail["hosting"] == true },
@@ -216,6 +220,11 @@ module ::AccountSecurity
     def historical_source?(detail)
       sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
       (sources & %w[history auth_session active_session]).any?
+    end
+
+    def core_history_source?(detail)
+      sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
+      sources.include?("history")
     end
 
     def auth_source?(detail)

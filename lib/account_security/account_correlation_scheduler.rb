@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "digest"
 require "time"
+require "tzinfo"
 
 module ::AccountSecurity
   module AccountCorrelationScheduler
@@ -17,6 +19,7 @@ module ::AccountSecurity
       "saturday" => 6,
       "sunday" => 7,
     }.freeze
+    DEFAULT_TIMEZONE = "UTC"
 
     def run_if_due!(now: Time.now.utc)
       return { enabled: false, frequency: frequency } unless enabled?
@@ -25,8 +28,9 @@ module ::AccountSecurity
       slot = latest_slot(now)
       last = last_slot
 
-      # On first execution after installing/upgrading, establish the current slot
-      # without launching an unexpected full scan immediately. Manual scan remains available.
+      # A new or changed schedule establishes its current slot first. This avoids
+      # unexpectedly launching a historical full scan immediately after upgrade
+      # or after an administrator edits the cadence/timezone.
       if last.blank?
         store_last_slot(slot)
         return schedule_status(now: now).merge(initialized: true, enqueued: false)
@@ -36,7 +40,10 @@ module ::AccountSecurity
 
       result = AccountCorrelationScanner.enqueue!(requested_by_id: nil, source: "scheduled")
       store_last_slot(slot) if result[:success]
-      schedule_status(now: now).merge(enqueued: result[:success] == true, enqueue_result: result[:success] ? "queued" : result[:error_code])
+      schedule_status(now: now).merge(
+        enqueued: result[:success] == true,
+        enqueue_result: result[:success] ? "queued" : result[:error_code],
+      )
     rescue StandardError => e
       Rails.logger.warn("[account_security] correlation scheduler failed class=#{e.class}")
       schedule_status(now: now).merge(error_code: "scheduler_failed")
@@ -44,17 +51,59 @@ module ::AccountSecurity
 
     def schedule_status(now: Time.now.utc)
       now = now.utc
-      return { enabled: false, frequency: frequency, timezone: "UTC", next_run_at: nil } unless enabled?
+      config = configuration
+      return config.merge(enabled: false, next_run_at: nil, last_scheduled_at: last_slot&.iso8601) unless enabled?
 
-      {
+      config.merge(
         enabled: true,
-        frequency: frequency,
-        timezone: "UTC",
         next_run_at: next_slot(now).iso8601,
         last_scheduled_at: last_slot&.iso8601,
-      }
+      )
     rescue StandardError
-      { enabled: enabled?, frequency: frequency, timezone: "UTC", next_run_at: nil }
+      configuration.merge(enabled: enabled?, next_run_at: nil, last_scheduled_at: nil)
+    end
+
+    def configuration
+      {
+        frequency: frequency,
+        time: send_time,
+        weekday: weekday,
+        day_of_month: day_of_month,
+        timezone: timezone,
+      }
+    end
+
+    def ensure_timezone!(value, actor:)
+      configured = SiteSetting.account_security_correlation_auto_scan_timezone.to_s
+      return configured if valid_timezone?(configured)
+      return timezone unless valid_timezone?(value)
+
+      SiteSetting.set_and_log("account_security_correlation_auto_scan_timezone", value.to_s, actor)
+      value.to_s
+    end
+
+    def update!(frequency:, send_time:, weekday:, day_of_month:, timezone:, actor:)
+      frequency = frequency.to_s
+      send_time = send_time.to_s
+      weekday = weekday.to_s
+      day_of_month = Integer(day_of_month, exception: false)
+      timezone = timezone.to_s
+
+      raise Discourse::InvalidParameters.new(:frequency) unless FREQUENCIES.include?(frequency)
+      raise Discourse::InvalidParameters.new(:time) unless valid_send_time?(send_time)
+      raise Discourse::InvalidParameters.new(:weekday) unless WEEKDAYS.key?(weekday)
+      unless day_of_month && day_of_month.between?(1, 28)
+        raise Discourse::InvalidParameters.new(:day_of_month)
+      end
+      raise Discourse::InvalidParameters.new(:timezone) unless valid_timezone?(timezone)
+
+      set_setting!("account_security_correlation_auto_scan_frequency", frequency, actor)
+      set_setting!("account_security_correlation_auto_scan_time", send_time, actor)
+      set_setting!("account_security_correlation_auto_scan_weekday", weekday, actor)
+      set_setting!("account_security_correlation_auto_scan_day_of_month", day_of_month, actor)
+      set_setting!("account_security_correlation_auto_scan_timezone", timezone, actor)
+
+      schedule_status
     end
 
     def enabled?
@@ -69,53 +118,73 @@ module ::AccountSecurity
     end
 
     def latest_slot(now)
+      now = now.utc
+      zone = time_zone
+      local_now = now.in_time_zone(zone)
       hour, minute = send_time_parts
-      case frequency
-      when "weekly"
-        target_cwday = WEEKDAYS.fetch(weekday, 7)
-        date = now.to_date - ((now.to_date.cwday - target_cwday) % 7).days
-        candidate = Time.utc(date.year, date.month, date.day, hour, minute)
-        candidate -= 7.days if candidate > now
-        candidate
-      when "quarterly"
-        quarterly_slot(now, hour, minute)
-      when "yearly"
-        candidate = Time.utc(now.year, 1, day_of_month, hour, minute)
-        candidate = Time.utc(now.year - 1, 1, day_of_month, hour, minute) if candidate > now
-        candidate
-      else
-        candidate = Time.utc(now.year, now.month, day_of_month, hour, minute)
-        if candidate > now
-          previous = now.to_date << 1
-          candidate = Time.utc(previous.year, previous.month, day_of_month, hour, minute)
+
+      candidate =
+        case frequency
+        when "weekly"
+          target_cwday = WEEKDAYS.fetch(weekday, 7)
+          date = local_now.to_date - ((local_now.to_date.cwday - target_cwday) % 7).days
+          local_slot(date, hour, minute, zone)
+        when "quarterly"
+          quarterly_slot(local_now, hour, minute, zone)
+        when "yearly"
+          local_slot(Date.new(local_now.year, 1, day_of_month), hour, minute, zone)
+        else
+          local_slot(Date.new(local_now.year, local_now.month, day_of_month), hour, minute, zone)
         end
-        candidate
+
+      if candidate > local_now
+        candidate = previous_slot_from(candidate, hour, minute, zone)
       end
+
+      candidate.utc
     end
 
     def next_slot(now)
-      latest = latest_slot(now)
-      case frequency
-      when "weekly"
-        latest + 7.days
-      when "quarterly"
-        date = latest.to_date >> 3
-        Time.utc(date.year, date.month, day_of_month, latest.hour, latest.min)
-      when "yearly"
-        Time.utc(latest.year + 1, 1, day_of_month, latest.hour, latest.min)
-      else
-        date = latest.to_date >> 1
-        Time.utc(date.year, date.month, day_of_month, latest.hour, latest.min)
-      end
+      zone = time_zone
+      latest_local = latest_slot(now).in_time_zone(zone)
+      hour, minute = send_time_parts
+      next_date =
+        case frequency
+        when "weekly"
+          latest_local.to_date + 7.days
+        when "quarterly"
+          latest_local.to_date >> 3
+        when "yearly"
+          Date.new(latest_local.year + 1, 1, day_of_month)
+        else
+          latest_local.to_date >> 1
+        end
+
+      local_slot(next_date, hour, minute, zone).utc
     end
 
-    def quarterly_slot(now, hour, minute)
-      quarter_month = ((now.month - 1) / 3) * 3 + 1
-      candidate = Time.utc(now.year, quarter_month, day_of_month, hour, minute)
-      return candidate if candidate <= now
+    def quarterly_slot(local_now, hour, minute, zone)
+      quarter_month = ((local_now.month - 1) / 3) * 3 + 1
+      local_slot(Date.new(local_now.year, quarter_month, day_of_month), hour, minute, zone)
+    end
 
-      date = candidate.to_date << 3
-      Time.utc(date.year, date.month, day_of_month, hour, minute)
+    def previous_slot_from(candidate, hour, minute, zone)
+      previous_date =
+        case frequency
+        when "weekly"
+          candidate.to_date - 7.days
+        when "quarterly"
+          candidate.to_date << 3
+        when "yearly"
+          Date.new(candidate.year - 1, 1, day_of_month)
+        else
+          candidate.to_date << 1
+        end
+      local_slot(previous_date, hour, minute, zone)
+    end
+
+    def local_slot(date, hour, minute, zone)
+      zone.local(date.year, date.month, date.day, hour, minute)
     end
 
     def weekday
@@ -127,11 +196,48 @@ module ::AccountSecurity
       SiteSetting.account_security_correlation_auto_scan_day_of_month.to_i.clamp(1, 28)
     end
 
-    def send_time_parts
+    def send_time
       value = SiteSetting.account_security_correlation_auto_scan_time.to_s
-      match = /\A([01]\d|2[0-3]):([0-5]\d)\z/.match(value)
-      return [3, 0] if match.blank?
+      valid_send_time?(value) ? value : "03:00"
+    end
+
+    def send_time_parts
+      match = /\A([01]\d|2[0-3]):([0-5]\d)\z/.match(send_time)
       [match[1].to_i, match[2].to_i]
+    end
+
+    def valid_send_time?(value)
+      /\A(?:[01]\d|2[0-3]):[0-5]\d\z/.match?(value.to_s)
+    end
+
+    def timezone
+      configured = SiteSetting.account_security_correlation_auto_scan_timezone.to_s
+      return configured if valid_timezone?(configured)
+
+      contact = site_contact_timezone
+      return contact if valid_timezone?(contact)
+
+      DEFAULT_TIMEZONE
+    end
+
+    def site_contact_timezone
+      username = SiteSetting.site_contact_username.to_s.downcase
+      return nil if username.blank?
+      User.find_by(username_lower: username)&.user_option&.timezone.to_s.presence
+    rescue StandardError
+      nil
+    end
+
+    def valid_timezone?(value)
+      return false if value.blank? || value.bytesize > 100
+      TZInfo::Timezone.get(value.to_s)
+      true
+    rescue TZInfo::InvalidTimezoneIdentifier
+      false
+    end
+
+    def time_zone
+      Time.find_zone(timezone) || Time.find_zone!(DEFAULT_TIMEZONE)
     end
 
     def last_slot
@@ -147,7 +253,16 @@ module ::AccountSecurity
     end
 
     def last_slot_key
-      "#{LAST_SLOT_KEY_PREFIX}:#{frequency}"
+      fingerprint = Digest::SHA256.hexdigest(
+        [frequency, send_time, weekday, day_of_month, timezone].join("|"),
+      ).first(16)
+      "#{LAST_SLOT_KEY_PREFIX}:#{fingerprint}"
+    end
+
+    def set_setting!(name, value, actor)
+      current = SiteSetting.public_send(name)
+      return if current.to_s == value.to_s
+      SiteSetting.set_and_log(name, value, actor)
     end
   end
 end

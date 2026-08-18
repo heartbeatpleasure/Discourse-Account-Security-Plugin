@@ -4,25 +4,38 @@ import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
-import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
+import {
+  accountSecurityUserTimezone,
+  formatAccountSecurityDateTime,
+} from "../../lib/account-security-date";
 
 export default class AdminPluginsAccountSecurityCorrelationsController extends Controller {
   @tracked data;
   @tracked isLoading = false;
   @tracked isScanning = false;
+  @tracked isSavingSchedule = false;
   @tracked status = "";
   @tracked confidence = "";
   @tracked search = "";
   @tracked page = 1;
+  @tracked scheduleFrequency = "monthly";
+  @tracked scheduleTime = "03:00";
+  @tracked scheduleWeekday = "sunday";
+  @tracked scheduleDayOfMonth = 1;
 
   resetState() {
     this.data = undefined;
     this.isLoading = false;
     this.isScanning = false;
+    this.isSavingSchedule = false;
     this.status = "";
     this.confidence = "";
     this.search = "";
     this.page = 1;
+    this.scheduleFrequency = "monthly";
+    this.scheduleTime = "03:00";
+    this.scheduleWeekday = "sunday";
+    this.scheduleDayOfMonth = 1;
   }
 
   sourceLabel(source) {
@@ -35,6 +48,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     ];
     const key = allowed.includes(source) ? source : "history";
     return i18n(`admin.account_security.correlations.ip_sources.${key}`);
+  }
+
+  sharedExactIpLabel(count) {
+    const value = Number(count || 0);
+    const key = value === 1 ? "shared_exact_ip_one" : "shared_exact_ip_other";
+    return i18n(`admin.account_security.correlations.${key}`, { count: value });
   }
 
   decorateIpDetail(detail, userA, userB) {
@@ -72,7 +91,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       context_display:
         contexts.join(" · ") ||
         i18n("admin.account_security.correlations.context_standard"),
-      low_weight: !detail.public || detail.trusted || detail.tor || detail.hosting || detail.mobile,
+      contextual:
+        !detail.public ||
+        detail.trusted ||
+        detail.tor ||
+        detail.hosting ||
+        detail.mobile,
       seen_by_display: i18n("admin.account_security.correlations.ip_seen_by", {
         count: Number(detail.user_count || 0),
       }),
@@ -120,12 +144,17 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     const signals = [];
 
     if (evidence.shared_exact_ip_count > 0) {
-      signals.push(
-        `${evidence.shared_exact_ip_count} ${i18n("admin.account_security.correlations.shared_exact_ips")}`
-      );
+      signals.push(this.sharedExactIpLabel(evidence.shared_exact_ip_count));
     }
     if (evidence.shared_registration_ip) {
       signals.push(i18n("admin.account_security.correlations.shared_registration_ip"));
+    }
+    if (evidence.shared_auth_ip_count > 0) {
+      signals.push(
+        i18n("admin.account_security.correlations.shared_auth_evidence", {
+          count: evidence.shared_auth_ip_count,
+        })
+      );
     }
     if (evidence.browser_continuity_count > 0) {
       signals.push(
@@ -231,17 +260,136 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     };
   }
 
+  addGroupAccount(group, user, sources) {
+    if (!user?.id) {
+      return;
+    }
+
+    let account = group.accounts.get(user.id);
+    if (!account) {
+      account = {
+        id: user.id,
+        username: user.username,
+        sources: new Set(),
+      };
+      group.accounts.set(user.id, account);
+    }
+    (sources || []).forEach((source) => account.sources.add(source));
+  }
+
+  buildSharedIpGroups(items) {
+    const groups = new Map();
+
+    (items || []).forEach((item) => {
+      (item.shared_ip_details || []).forEach((detail) => {
+        const totalAccounts = Number(detail.user_count || 0);
+        if (!detail.ip_address || totalAccounts < 3) {
+          return;
+        }
+
+        let group = groups.get(detail.ip_address);
+        if (!group) {
+          group = {
+            ip_address: detail.ip_address,
+            total_accounts: totalAccounts,
+            accounts: new Map(),
+            pair_ids: new Set(),
+            max_score: 0,
+            context_display: detail.context_display,
+            public: detail.public === true,
+            trusted: detail.trusted === true,
+            tor: detail.tor === true,
+            hosting: detail.hosting === true,
+            mobile: detail.mobile === true,
+          };
+          groups.set(detail.ip_address, group);
+        }
+
+        group.total_accounts = Math.max(group.total_accounts, totalAccounts);
+        group.max_score = Math.max(group.max_score, Number(item.score || 0));
+        group.pair_ids.add(item.id);
+        this.addGroupAccount(group, item.user_a, detail.sources_a);
+        this.addGroupAccount(group, item.user_b, detail.sources_b);
+      });
+    });
+
+    return [...groups.values()]
+      .map((group) => {
+        const accounts = [...group.accounts.values()]
+          .map((account) => ({
+            ...account,
+            sources_display: [...account.sources]
+              .map((source) => this.sourceLabel(source))
+              .join(", "),
+          }))
+          .sort((a, b) => a.username.localeCompare(b.username));
+        const registrationAccounts = accounts.filter((account) =>
+          account.sources.has("registration")
+        ).length;
+        const authAccounts = accounts.filter(
+          (account) =>
+            account.sources.has("auth_session") ||
+            account.sources.has("active_session")
+        ).length;
+        const visibleCount = accounts.length;
+
+        return {
+          ...group,
+          accounts,
+          visible_account_count: visibleCount,
+          pair_count: group.pair_ids.size,
+          registration_account_count: registrationAccounts,
+          auth_account_count: authAccounts,
+          account_count_label: i18n(
+            "admin.account_security.correlations.group_account_count",
+            { count: group.total_accounts }
+          ),
+          coverage_label:
+            visibleCount >= group.total_accounts
+              ? i18n("admin.account_security.correlations.group_all_accounts", {
+                  count: group.total_accounts,
+                })
+              : i18n("admin.account_security.correlations.group_partial_accounts", {
+                  visible: visibleCount,
+                  total: group.total_accounts,
+                }),
+          pair_count_label: i18n(
+            "admin.account_security.correlations.group_pair_count",
+            { count: group.pair_ids.size }
+          ),
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.total_accounts - a.total_accounts ||
+          b.max_score - a.max_score ||
+          a.ip_address.localeCompare(b.ip_address)
+      );
+  }
+
   decorateData(data) {
     if (!data) {
       return data;
     }
 
+    const items = (data.items || []).map((item) => this.decorateItem(item));
     return {
       ...data,
       scan: this.decorateScan(data.scan),
       schedule: this.decorateSchedule(data.schedule),
-      items: (data.items || []).map((item) => this.decorateItem(item)),
+      items,
+      shared_ip_groups: this.buildSharedIpGroups(items),
     };
+  }
+
+  syncScheduleForm(schedule) {
+    if (!schedule) {
+      return;
+    }
+    this.scheduleFrequency = schedule.frequency || "monthly";
+    this.scheduleTime = schedule.time || "03:00";
+    this.scheduleWeekday = schedule.weekday || "sunday";
+    this.scheduleDayOfMonth = Number(schedule.day_of_month || 1);
   }
 
   @action
@@ -257,6 +405,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         },
       });
       this.data = this.decorateData(data);
+      this.syncScheduleForm(this.data.schedule);
     } catch (error) {
       popupAjaxError(error);
     } finally {
@@ -267,6 +416,53 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @action setStatus(event) { this.status = event.target.value; }
   @action setConfidence(event) { this.confidence = event.target.value; }
   @action setSearch(event) { this.search = event.target.value; }
+  @action setScheduleFrequency(event) { this.scheduleFrequency = event.target.value; }
+  @action setScheduleTime(event) { this.scheduleTime = event.target.value; }
+  @action setScheduleWeekday(event) { this.scheduleWeekday = event.target.value; }
+  @action setScheduleDay(event) { this.scheduleDayOfMonth = Number(event.target.value); }
+
+  get scheduleEnabled() {
+    return this.scheduleFrequency !== "off";
+  }
+
+  get scheduleIsWeekly() {
+    return this.scheduleFrequency === "weekly";
+  }
+
+  get scheduleUsesDayOfMonth() {
+    return ["monthly", "quarterly", "yearly"].includes(this.scheduleFrequency);
+  }
+
+  @action
+  async saveSchedule() {
+    this.isSavingSchedule = true;
+    try {
+      const response = await ajax(
+        "/admin/plugins/account-security/correlations/schedule.json",
+        {
+          type: "PUT",
+          data: {
+            frequency: this.scheduleFrequency,
+            time: this.scheduleTime,
+            weekday: this.scheduleWeekday,
+            day_of_month: this.scheduleDayOfMonth,
+            timezone: accountSecurityUserTimezone(),
+          },
+        }
+      );
+      if (this.data) {
+        this.data = {
+          ...this.data,
+          schedule: this.decorateSchedule(response.schedule),
+        };
+      }
+      this.syncScheduleForm(this.data?.schedule);
+    } catch (error) {
+      popupAjaxError(error);
+    } finally {
+      this.isSavingSchedule = false;
+    }
+  }
 
   @action
   applyFilters() {

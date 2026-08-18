@@ -19,6 +19,7 @@ module ::AccountSecurity
       abuse_reported
       account_correlation_review_changed
       account_correlation_scan_started
+      account_correlation_schedule_changed
     ].freeze
 
     SAFE_DETAIL_KEYS = %i[
@@ -33,6 +34,7 @@ module ::AccountSecurity
       feed
       result
       correlation_id
+      frequency
     ].freeze
 
     SAFE_TOKEN = /\A[a-z0-9_.:-]{1,80}\z/i

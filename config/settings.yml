@@ -73,6 +73,14 @@ plugins:
     depends_on:
       - account_security_account_correlation_enabled
 
+  account_security_correlation_auto_scan_timezone:
+    default: ""
+    type: string
+    hidden: true
+    client: false
+    depends_on:
+      - account_security_account_correlation_enabled
+
   account_security_correlation_auto_scan_weekday:
     default: "sunday"
     type: enum

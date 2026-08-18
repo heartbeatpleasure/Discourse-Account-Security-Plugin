@@ -70,7 +70,7 @@ export default RouteTemplate(
       }
       .as-stats__summary-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: .75rem;
       }
       .as-stats__summary-card {
@@ -159,6 +159,7 @@ export default RouteTemplate(
         color: var(--as-muted);
       }
       @media (max-width: 1000px) {
+        .as-stats__summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-stats__daily-groups { grid-template-columns: 1fr 1fr; }
       }
       @media (max-width: 700px) {
@@ -166,6 +167,7 @@ export default RouteTemplate(
         .as-stats__actions { justify-content: flex-start; margin-left: 0; }
         .as-stats__toolbar { flex-direction: column; align-items: stretch; }
         .as-stats__period-control { width: 100%; }
+        .as-stats__summary-grid,
         .as-stats__daily-groups { grid-template-columns: 1fr; }
         .as-stats__daily-header { flex-direction: column; align-items: flex-start; gap: .25rem; }
       }

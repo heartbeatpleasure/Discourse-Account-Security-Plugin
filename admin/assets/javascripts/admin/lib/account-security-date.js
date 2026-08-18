@@ -52,14 +52,13 @@ export function formatAccountSecurityDateTime(value) {
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-      timeZoneName: "short",
     }).format(parsed);
   } catch {
     const fallback = moment(value);
     if (!fallback.isValid()) {
       return value;
     }
-    return fallback.tz(timezone).format("D MMMM YYYY, HH:mm z");
+    return fallback.tz(timezone).format("D MMMM YYYY, HH:mm");
   }
 }
 

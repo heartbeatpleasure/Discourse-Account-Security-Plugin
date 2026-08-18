@@ -176,6 +176,7 @@ module ::AccountSecurity
     end
 
     def correlations
+      AccountCorrelationScheduler.ensure_timezone!(current_user.user_option&.timezone, actor: current_user)
       page = positive_integer_value(params[:page]) || 1
       per_page = 50
       status = params[:status].to_s
@@ -212,6 +213,25 @@ module ::AccountSecurity
         schedule: AccountCorrelationScheduler.schedule_status,
         items: items.map { |item| serialize_correlation(item) },
       )
+    end
+
+
+    def update_correlation_schedule
+      rate_limit!("correlation-schedule-update", 10, 10.minutes)
+      schedule = AccountCorrelationScheduler.update!(
+        frequency: params.require(:frequency),
+        send_time: params.require(:time),
+        weekday: params.require(:weekday),
+        day_of_month: params.require(:day_of_month),
+        timezone: clean_required(params.require(:timezone), 100, :timezone),
+        actor: current_user,
+      )
+      StaffAudit.log!(
+        actor: current_user,
+        action: "account_correlation_schedule_changed",
+        details: { frequency: schedule[:frequency] },
+      )
+      render_json_dump(success: true, schedule: schedule)
     end
 
     def update_correlation
@@ -513,11 +533,13 @@ module ::AccountSecurity
           shared_registration_ip_nonpublic: evidence["shared_registration_ip_nonpublic"] == true,
           same_current_ip: evidence["same_current_ip"] == true,
           same_current_ip_public: evidence["same_current_ip_public"] == true,
+          same_current_ip_nonpublic: evidence["same_current_ip_nonpublic"] == true,
           shared_exact_ip_count: evidence["shared_exact_ip_count"].to_i,
           shared_public_ip_count: evidence["shared_public_ip_count"].to_i,
           untrusted_public_ip_count: evidence["untrusted_public_ip_count"].to_i,
           shared_nonpublic_ip_count: evidence["shared_nonpublic_ip_count"].to_i,
           shared_history_ip_count: evidence["shared_history_ip_count"].to_i,
+          shared_core_history_ip_count: evidence["shared_core_history_ip_count"].to_i,
           shared_auth_ip_count: evidence["shared_auth_ip_count"].to_i,
           trusted_shared_ip_count: evidence["trusted_shared_ip_count"].to_i,
           tor_shared_ip_count: evidence["tor_shared_ip_count"].to_i,

@@ -45,15 +45,17 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation.score).to be < SiteSetting.account_security_correlation_min_score
   end
 
-  it "keeps exact private registration-IP overlap as weak contextual evidence" do
-    user_a.update_columns(registration_ip_address: "10.0.0.50")
-    user_b.update_columns(registration_ip_address: "10.0.0.50")
+  it "keeps exact private registration-IP overlap visible and gives close registrations meaningful weight" do
+    user_a.update_columns(registration_ip_address: "10.0.0.50", ip_address: "10.0.0.50", created_at: 1.hour.ago)
+    user_b.update_columns(registration_ip_address: "10.0.0.50", ip_address: "10.0.0.50", created_at: Time.zone.now)
 
     correlation = described_class.recalculate_pair!(user_a.id, user_b.id, source: "spec")
 
     expect(correlation).to be_present
     expect(correlation.evidence["shared_registration_ip_nonpublic"]).to eq(true)
-    expect(correlation.confidence).to eq("weak")
+    expect(correlation.evidence["same_current_ip_nonpublic"]).to eq(true)
+    expect(correlation.score).to be >= 40
+    expect(correlation.confidence).to eq("moderate")
   end
 
   it "combines repeated shared networks with a hashed session signature" do
