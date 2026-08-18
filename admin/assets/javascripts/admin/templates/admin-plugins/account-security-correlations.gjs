@@ -1235,7 +1235,7 @@ export default RouteTemplate(
         <p class="as-correlation__muted as-correlation__filter-hint">{{i18n "admin.account_security.correlations.filters_apply_views"}}</p>
       </section>
 
-      {{#if @controller.data.items.length}}
+      {{#if @controller.data}}
         <section class="as-correlation__panel as-correlation__view-switcher">
           <div class="as-correlation__copy">
             <h2>{{i18n "admin.account_security.correlations.views_title"}}</h2>
@@ -1399,6 +1399,12 @@ export default RouteTemplate(
                   <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.shared_ip_groups_description"}}</p>
                 </div>
                 <div class="as-correlation__view-note" style="margin-top: .8rem;">{{i18n "admin.account_security.correlations.shared_ip_score_note"}}</div>
+                {{#unless @controller.data.shared_ip_source_complete}}
+                  <div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.shared_ip_source_incomplete"}}</div>
+                {{/unless}}
+                {{#if @controller.data.shared_ip_filter_truncated}}
+                  <div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.shared_ip_filter_truncated"}}</div>
+                {{/if}}
                 {{#if @controller.data.shared_ip_groups.length}}
                   <div class="as-correlation__group-list">
                     {{#each @controller.data.shared_ip_groups as |group|}}
@@ -1441,6 +1447,9 @@ export default RouteTemplate(
                               </div>
                             {{/each}}
                           </div>
+                          {{#if group.accounts_truncated}}
+                            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.account_preview_truncated"}}</p>
+                          {{/if}}
                           {{#if group.pairs.length}}
                             <div class="as-correlation__group-pairs">
                               <div class="as-correlation__group-pairs-header">
@@ -1452,6 +1461,9 @@ export default RouteTemplate(
                                   <AccountSecurityCorrelationPairRow @item={{item}} @controller={{@controller}} />
                                 {{/each}}
                               </div>
+                              {{#if group.pairs_truncated}}
+                                <p class="as-correlation__muted" style="margin-top: .55rem;">{{i18n "admin.account_security.correlations.pair_preview_truncated"}}</p>
+                              {{/if}}
                             </div>
                           {{/if}}
                         </div>
@@ -1469,11 +1481,15 @@ export default RouteTemplate(
                   <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.pair_comparisons_description"}}</p>
                 </div>
                 <div class="as-correlation__view-note" style="margin-top: .8rem;">{{i18n "admin.account_security.correlations.pair_score_definition"}}</div>
-                <div class="as-correlation__candidate-list">
-                  {{#each @controller.data.items as |item|}}
-                    <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
-                  {{/each}}
-                </div>
+                {{#if @controller.data.items.length}}
+                  <div class="as-correlation__candidate-list">
+                    {{#each @controller.data.items as |item|}}
+                      <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
+                    {{/each}}
+                  </div>
+                {{else}}
+                  <div class="as-correlation__empty" style="margin-top: .85rem;">{{i18n "admin.account_security.no_data"}}</div>
+                {{/if}}
               </section>
             {{/if}}
           {{/if}}
@@ -1482,7 +1498,7 @@ export default RouteTemplate(
         <section class="as-correlation__panel">
           <div class="as-correlation__pagination">
             <button class="btn" type="button" disabled={{unless @controller.hasPreviousPage true false}} {{on "click" @controller.previousPage}}>{{i18n "admin.account_security.correlations.previous"}}</button>
-            <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.page"}} {{@controller.data.page}}</span>
+            <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.page"}} {{@controller.currentPage}}</span>
             <button class="btn" type="button" disabled={{unless @controller.hasNextPage true false}} {{on "click" @controller.nextPage}}>{{i18n "admin.account_security.correlations.next"}}</button>
           </div>
         </section>

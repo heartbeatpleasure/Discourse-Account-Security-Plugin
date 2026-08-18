@@ -3,7 +3,24 @@ import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { i18n } from "discourse-i18n";
 import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
+
+
+const AUDIT_ACTIONS = new Set([
+  "event_created",
+  "incident_escalated",
+  "review_changed",
+  "intelligence_refreshed",
+  "user_note_added",
+  "temporary_block_created",
+  "temporary_block_released",
+  "notification_suppression_created",
+  "notification_suppression_released",
+  "abuse_report_attempted",
+  "abuse_reported",
+  "staff_notified",
+]);
 
 export default class AdminPluginsAccountSecurityEventController extends Controller {
   @tracked data;
@@ -59,6 +76,25 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
         }
       : null;
 
+    const intelligenceSnapshot = data.intelligence_snapshot
+      ? {
+          ...data.intelligence_snapshot,
+          captured_at_display: formatAccountSecurityDateTime(
+            data.intelligence_snapshot.captured_at
+          ),
+          last_reported_at_display: formatAccountSecurityDateTime(
+            data.intelligence_snapshot.last_reported_at
+          ),
+          provider_checked_at_display: formatAccountSecurityDateTime(
+            data.intelligence_snapshot.provider_checked_at
+          ),
+        }
+      : null;
+
+    const auditHistory = (data.audit_history || []).map((audit) =>
+      this.decorateAudit(audit)
+    );
+
     const temporaryBlock = data.temporary_block
       ? {
           ...data.temporary_block,
@@ -81,9 +117,105 @@ export default class AdminPluginsAccountSecurityEventController extends Controll
       ...data,
       event,
       intelligence,
+      intelligence_snapshot: intelligenceSnapshot,
+      audit_history: auditHistory,
       temporary_block: temporaryBlock,
       notification_suppression: notificationSuppression,
     };
+  }
+
+  decorateAudit(audit) {
+    const action = AUDIT_ACTIONS.has(audit?.action) ? audit.action : "generic";
+    const details = audit?.details || {};
+
+    return {
+      ...audit,
+      action_label: i18n(
+        `admin.account_security.event_detail.audit.actions.${action}`
+      ),
+      actor_display:
+        audit?.actor?.username ||
+        i18n("admin.account_security.event_detail.audit.system_actor"),
+      created_at_display: formatAccountSecurityDateTime(audit?.created_at),
+      status_display: this.auditStatusDisplay(audit),
+      details_display: this.auditDetailsDisplay(details),
+    };
+  }
+
+  auditStatusDisplay(audit) {
+    if (!audit?.from_status && !audit?.to_status) {
+      return null;
+    }
+
+    const from = audit.from_status || "—";
+    const to = audit.to_status || "—";
+    return i18n("admin.account_security.event_detail.audit.status_change", {
+      from,
+      to,
+    });
+  }
+
+  auditDetailsDisplay(details) {
+    const parts = [];
+    const addChange = (key, fromKey, toKey) => {
+      if (details[fromKey] || details[toKey]) {
+        parts.push(
+          i18n(`admin.account_security.event_detail.audit.${key}`, {
+            from: details[fromKey] || "—",
+            to: details[toKey] || "—",
+          })
+        );
+      }
+    };
+
+    addChange("risk_change", "risk_level_from", "risk_level_to");
+    addChange("severity_change", "severity_from", "severity_to");
+    addChange("evidence_change", "evidence_from", "evidence_to");
+
+    if (details.resolution_reason) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.reason_detail", {
+          value: details.resolution_reason,
+        })
+      );
+    }
+    if (details.duration_minutes) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.duration_minutes", {
+          value: details.duration_minutes,
+        })
+      );
+    }
+    if (details.duration_hours) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.duration_hours", {
+          value: details.duration_hours,
+        })
+      );
+    }
+    if (details.result) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.result_detail", {
+          value: details.result,
+        })
+      );
+    }
+    if (details.provider_status) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.provider_status_detail", {
+          value: details.provider_status,
+        })
+      );
+    }
+    if (details.notification_kind) {
+      parts.push(
+        i18n("admin.account_security.event_detail.audit.notification_detail", {
+          value: details.notification_kind,
+        })
+      );
+    }
+
+    return parts.join(" · ");
   }
 
   get event() {

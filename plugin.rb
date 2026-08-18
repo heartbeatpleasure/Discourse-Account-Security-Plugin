@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.20.0
+# version: 0.21.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.20.0"
+  PLUGIN_VERSION = "0.21.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -28,6 +28,7 @@ after_initialize do
   %w[
     app/models/account_security/ip_intelligence.rb
     app/models/account_security/risk_event.rb
+    app/models/account_security/risk_event_audit.rb
     app/models/account_security/user_network.rb
     app/models/account_security/trusted_network.rb
     app/models/account_security/provider_usage.rb
@@ -71,10 +72,13 @@ after_initialize do
     lib/account_security/account_correlation_scan_context.rb
     lib/account_security/account_correlation_scanner.rb
     lib/account_security/account_group_builder.rb
+    lib/account_security/shared_ip_group_builder.rb
     lib/account_security/account_correlation_scheduler.rb
     lib/account_security/authentication_abuse_tracker.rb
     lib/account_security/authentication_tracking_hooks.rb
     lib/account_security/staff_audit.rb
+    lib/account_security/event_intelligence_snapshot.rb
+    lib/account_security/risk_event_audit_trail.rb
     lib/account_security/user_note_writer.rb
     lib/account_security/temporary_ip_block_manager.rb
     lib/account_security/notification_suppression_manager.rb
@@ -162,6 +166,7 @@ after_initialize do
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
     ::AccountSecurity::RiskEvent.where(user_id: user.id).update_all(user_id: nil)
     ::AccountSecurity::RiskEvent.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
+    ::AccountSecurity::RiskEventAudit.where(actor_user_id: user.id).update_all(actor_user_id: nil)
     ::AccountSecurity::TemporaryIpBlock.where(created_by_id: user.id).update_all(created_by_id: nil)
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
@@ -194,6 +199,7 @@ after_initialize do
     ::AccountSecurity::AccountCorrelation.where(id: correlation_ids).delete_all if correlation_ids.any?
     ::AccountSecurity::AccountCorrelation.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
     ::AccountSecurity::AccountCorrelation.where(primary_user_id: user.id).update_all(primary_user_id: nil)
+    ::AccountSecurity::RiskEventAudit.where(actor_user_id: user.id).update_all(actor_user_id: nil)
 
     next unless opts&.key?(:anonymize_ip)
 
@@ -243,6 +249,10 @@ after_initialize do
     post "/admin/plugins/account-security/lookup.json" => "account_security/admin#lookup",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/correlations.json" => "account_security/admin#correlations",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/correlations/groups.json" => "account_security/admin#correlation_groups",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/correlations/shared-ips.json" => "account_security/admin#correlation_shared_ips",
         defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/correlations/scan-status.json" => "account_security/admin#correlation_scan_status",
         defaults: { format: :json }, constraints: AdminConstraint.new

@@ -47,6 +47,7 @@ RSpec.describe AccountSecurity::CorrelationIncidentNotifier do
     expect(captured[:target_group_names]).to eq(group.name)
     expect(captured[:raw]).to include(user_a.username)
     expect(captured[:raw]).to include(user_b.username)
+    expect(captured[:raw]).to include("/admin/plugins/account-security-correlations?pair_id=#{item.id}")
 
     expect(described_class.notify_if_needed!(item, source: "login")).to eq(false)
     expect(PostCreator).to have_received(:create!).once

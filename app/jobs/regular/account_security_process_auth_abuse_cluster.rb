@@ -4,7 +4,6 @@ module Jobs
   class AccountSecurityProcessAuthAbuseCluster < ::Jobs::Base
     def execute(args)
       return unless SiteSetting.account_security_enabled
-      return unless SiteSetting.account_security_ip_reputation_enabled
       return unless SiteSetting.account_security_auth_abuse_detection_enabled
 
       ip = ::AccountSecurity::IpNormalizer.normalize_public(args[:ip] || args["ip"])
@@ -28,19 +27,28 @@ module Jobs
 
       escalation = boolean_value(args[:escalation] || args["escalation"])
       trigger = family == "registration_rejected" ? "registration_abuse" : "auth_failure"
-      result = ::AccountSecurity::AssessmentService.call(
-        ip: ip,
-        user: nil,
-        trigger: trigger,
-        force_remote: false,
-        allow_remote: !escalation,
-        event_context: context,
-      )
+      if SiteSetting.account_security_ip_reputation_enabled
+        result = ::AccountSecurity::AssessmentService.call(
+          ip: ip,
+          user: nil,
+          trigger: trigger,
+          force_remote: false,
+          allow_remote: !escalation,
+          event_context: context,
+        )
 
-      if result.event.nil?
+        if result.event.nil?
+          ::AccountSecurity::EventRecorder.record_local_cluster!(
+            ip: ip,
+            intelligence: result.intelligence,
+            trigger: trigger,
+            local_context: context,
+          )
+        end
+      else
         ::AccountSecurity::EventRecorder.record_local_cluster!(
           ip: ip,
-          intelligence: result.intelligence,
+          intelligence: nil,
           trigger: trigger,
           local_context: context,
         )

@@ -98,3 +98,15 @@ RSpec.describe AccountSecurity::AuthenticationAbuseTracker do
     expect(Jobs).to have_received(:enqueue).twice
   end
 end
+
+RSpec.describe AccountSecurity::AuthenticationAbuseTracker, "without external IP reputation" do
+  before do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_ip_reputation_enabled = false
+    SiteSetting.account_security_auth_abuse_detection_enabled = true
+  end
+
+  it "remains enabled because local abuse aggregation is independent of provider enrichment" do
+    expect(described_class.enabled?).to eq(true)
+  end
+end

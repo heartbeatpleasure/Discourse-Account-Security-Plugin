@@ -65,6 +65,12 @@ module ::AccountSecurity
         action: "temporary_block_created",
         details: { event_id: event.id, temporary_block_id: block.id, duration_minutes: duration },
       )
+      RiskEventAuditTrail.record!(
+        event: event,
+        action: "temporary_block_created",
+        actor: actor,
+        details: { temporary_block_id: block.id, duration_minutes: duration },
+      )
       block
     end
 
@@ -85,9 +91,9 @@ module ::AccountSecurity
     def release_record!(block, actor:, reason:)
       normalized = IpNormalizer.normalize_public(block.ip_address)
       mutex_key = "account-security-temp-block-release-#{block.id}"
-      released = DistributedMutex.synchronize(mutex_key, validity: 15) do
+      released, release_changed = DistributedMutex.synchronize(mutex_key, validity: 15) do
         current = TemporaryIpBlock.find_by(id: block.id)
-        next current if current.blank? || current.released_at.present?
+        next [current, false] if current.blank? || current.released_at.present?
 
         screened = ScreenedIpAddress.find_by(id: current.screened_ip_address_id)
         release_reason = reason.to_s.first(64)
@@ -103,15 +109,24 @@ module ::AccountSecurity
 
           current.update!(released_at: Time.zone.now, release_reason: release_reason)
         end
-        current
+        [current, true]
       end
 
-      if actor && released
-        StaffAudit.log!(
-          actor: actor,
+      if released && release_changed
+        if actor
+          StaffAudit.log!(
+            actor: actor,
+            action: "temporary_block_released",
+            details: { event_id: released.risk_event_id, temporary_block_id: released.id, result: released.release_reason },
+          )
+        end
+        event = RiskEvent.find_by(id: released.risk_event_id)
+        RiskEventAuditTrail.record!(
+          event: event,
           action: "temporary_block_released",
-          details: { event_id: released.risk_event_id, temporary_block_id: released.id, result: released.release_reason },
-        )
+          actor: actor,
+          details: { temporary_block_id: released.id, result: released.release_reason },
+        ) if event
       end
       released
     rescue StandardError => e

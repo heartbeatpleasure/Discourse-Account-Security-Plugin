@@ -41,6 +41,12 @@ module ::AccountSecurity
         ::DiscourseUserNotes.add_note(current.user, note, Discourse::SYSTEM_USER_ID)
         current.update_columns(user_note_created_at: Time.zone.now, updated_at: Time.zone.now)
         StaffAudit.log!(actor: actor, action: "user_note_added", details: { event_id: current.id }) if actor
+        RiskEventAuditTrail.record!(
+          event: current,
+          action: "user_note_added",
+          actor: actor,
+          details: { automatic: automatic == true },
+        )
         true
       end
     rescue StandardError => e

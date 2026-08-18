@@ -63,6 +63,41 @@ module ::AccountSecurity
       configuration.merge(enabled: enabled?, next_run_at: nil, last_scheduled_at: nil)
     end
 
+    def health_status(now: Time.now.utc)
+      now = now.utc
+      schedule = schedule_status(now: now)
+      return schedule.merge(state: "disabled", reason: nil, overdue: false) unless schedule[:enabled]
+
+      last = last_slot
+      expected = latest_slot(now)
+      if last.blank?
+        return schedule.merge(
+          state: "initializing",
+          reason: nil,
+          overdue: false,
+          expected_slot_at: expected.iso8601,
+        )
+      end
+
+      overdue = last < expected && now >= expected + 45.minutes
+      schedule.merge(
+        state: overdue ? "degraded" : "healthy",
+        reason: overdue ? "correlation_schedule_overdue" : nil,
+        overdue: overdue,
+        expected_slot_at: expected.iso8601,
+      )
+    rescue StandardError => e
+      Rails.logger.warn("[account_security] correlation schedule health failed class=#{e.class}")
+      configuration.merge(
+        enabled: enabled?,
+        state: "degraded",
+        reason: "correlation_scheduler_failed",
+        overdue: false,
+        next_run_at: nil,
+        last_scheduled_at: nil,
+      )
+    end
+
     def configuration
       {
         frequency: frequency,

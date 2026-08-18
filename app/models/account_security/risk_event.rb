@@ -14,6 +14,12 @@ module ::AccountSecurity
     has_many :temporary_ip_blocks,
              class_name: "::AccountSecurity::TemporaryIpBlock",
              foreign_key: :risk_event_id
+    has_many :audits,
+             class_name: "::AccountSecurity::RiskEventAudit",
+             foreign_key: :risk_event_id
+    has_one :provider_report,
+            class_name: "::AccountSecurity::ProviderReport",
+            foreign_key: :risk_event_id
 
     validates :event_type, inclusion: { in: EVENT_TYPES }
     validates :severity, inclusion: { in: SEVERITIES }

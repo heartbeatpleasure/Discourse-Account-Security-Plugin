@@ -80,3 +80,34 @@ RSpec.describe AccountSecurity::AccountCorrelationScheduler do
     end
   end
 end
+
+RSpec.describe AccountSecurity::AccountCorrelationScheduler, "health reporting" do
+  fab!(:admin)
+
+  before do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    SiteSetting.account_security_correlation_auto_scan_frequency = "monthly"
+    SiteSetting.account_security_correlation_auto_scan_time = "03:00"
+    SiteSetting.account_security_correlation_auto_scan_day_of_month = 1
+    SiteSetting.site_contact_username = admin.username
+    admin.user_option.update!(timezone: "UTC")
+    PluginStore.remove(AccountSecurity::STORE_NAMESPACE, described_class.last_slot_key)
+  end
+
+  after do
+    PluginStore.remove(AccountSecurity::STORE_NAMESPACE, described_class.last_slot_key)
+  end
+
+  it "reports an overdue automatic scan after the scheduler grace period" do
+    now = Time.utc(2026, 8, 18, 12, 0)
+    previous_slot = Time.utc(2026, 7, 1, 3, 0)
+    described_class.store_last_slot(previous_slot)
+
+    health = described_class.health_status(now: now)
+
+    expect(health[:state]).to eq("degraded")
+    expect(health[:reason]).to eq("correlation_schedule_overdue")
+    expect(health[:overdue]).to eq(true)
+  end
+end

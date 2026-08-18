@@ -103,7 +103,6 @@ module ::AccountSecurity
 
     def enabled?
       SiteSetting.account_security_enabled &&
-        SiteSetting.account_security_ip_reputation_enabled &&
         SiteSetting.account_security_auth_abuse_detection_enabled
     end
 

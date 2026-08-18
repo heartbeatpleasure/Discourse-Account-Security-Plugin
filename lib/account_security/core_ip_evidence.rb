@@ -114,6 +114,25 @@ module ::AccountSecurity
         Rails.logger.warn("[account_security] large shared IP context summary failed class=#{e.class}")
       end
 
+      def shared_ip_groups(min_users: 3)
+        threshold = [min_users.to_i, 2].max
+        @by_ip.filter_map do |ip, users|
+          next if users.length < threshold
+
+          {
+            ip_address: ip,
+            account_count: users.length,
+            accounts: users.keys.sort.map do |user_id|
+              { user_id: user_id, sources: users[user_id].to_a.map(&:to_s).sort }
+            end,
+          }
+        end.sort_by { |group| [-group[:account_count], group[:ip_address].to_s] }
+      end
+
+      def source_complete?
+        diagnostics[:auth_log_truncated] != true && diagnostics[:session_observation_truncated] != true
+      end
+
       def shared_details(user_a_id, user_b_id)
         a = @by_user[user_a_id.to_i]
         b = @by_user[user_b_id.to_i]

@@ -17,6 +17,8 @@ export default class AdminPluginsAccountSecurityTrustedNetworksController extend
   @tracked expiresAt = "";
   @tracked confirmBroad = false;
   @tracked isLoading = false;
+  @tracked search = "";
+  @tracked page = 1;
 
   resetState() {
     this.data = { items: [] };
@@ -26,6 +28,8 @@ export default class AdminPluginsAccountSecurityTrustedNetworksController extend
     this.expiresAt = "";
     this.confirmBroad = false;
     this.isLoading = false;
+    this.search = "";
+    this.page = 1;
   }
 
   decorateData(data) {
@@ -50,13 +54,46 @@ export default class AdminPluginsAccountSecurityTrustedNetworksController extend
     this.isLoading = true;
     try {
       this.data = this.decorateData(
-        await ajax("/admin/plugins/account-security/trusted-networks.json")
+        await ajax("/admin/plugins/account-security/trusted-networks.json", {
+          data: { search: this.search, page: this.page },
+        })
       );
+      this.page = Number(this.data?.page || 1);
     } catch (e) {
       popupAjaxError(e);
     } finally {
       this.isLoading = false;
     }
+  }
+
+  get hasPreviousPage() {
+    return Number(this.data?.page || 1) > 1;
+  }
+
+  get hasNextPage() {
+    if (!this.data) { return false; }
+    return Number(this.data.page || 1) * Number(this.data.per_page || 50) < Number(this.data.total || 0);
+  }
+
+  @action setSearch(e) { this.search = e.target.value; }
+  @action
+  applySearch() {
+    this.page = 1;
+    this.loadItems();
+  }
+
+  @action
+  previousPage() {
+    if (!this.hasPreviousPage) { return; }
+    this.page = Math.max(1, this.page - 1);
+    this.loadItems();
+  }
+
+  @action
+  nextPage() {
+    if (!this.hasNextPage) { return; }
+    this.page += 1;
+    this.loadItems();
   }
 
   @action setNetwork(e) { this.network = e.target.value; }

@@ -34,6 +34,11 @@ module ::AccountSecurity
         now = Time.zone.now
         event.update_columns(notified_at: now, notification_kind: kind, updated_at: now)
         Statistics.increment!(notifications_sent: 1)
+        RiskEventAuditTrail.record!(
+          event: event,
+          action: "staff_notified",
+          details: { notification_kind: kind },
+        )
         true
       end
     rescue StandardError => e
@@ -53,7 +58,8 @@ module ::AccountSecurity
         return "staff_new_network"
       end
 
-      if event.event_type == "auth_failure_cluster" && event.evidence_strength == "corroborated" &&
+      if event.event_type == "auth_failure_cluster" &&
+           evidence >= EVIDENCE_RANK["strong"] &&
            (context["local_abuse_confirmed"] == true || context["staff_targeted"] == true)
         return "auth_abuse_cluster"
       end

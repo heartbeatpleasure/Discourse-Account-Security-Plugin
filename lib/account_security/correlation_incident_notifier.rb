@@ -89,7 +89,7 @@ module ::AccountSecurity
           shared_ips: evidence["shared_exact_ip_count"].to_i,
           public_ips: evidence["untrusted_public_ip_count"].to_i,
           auth_ips: evidence["shared_auth_ip_count"].to_i,
-          correlation_url: "#{Discourse.base_url}/admin/plugins/account-security-correlations#correlation-#{correlation.id}",
+          correlation_url: "#{Discourse.base_url}/admin/plugins/account-security-correlations?pair_id=#{correlation.id}",
         )
       end
 

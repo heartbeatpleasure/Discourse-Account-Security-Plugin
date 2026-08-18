@@ -1,11 +1,16 @@
 # frozen_string_literal: true
 
+require "set"
+
 module ::AccountSecurity
   class AdminController < ::Admin::AdminController
     requires_plugin ::AccountSecurity::PLUGIN_NAME
     before_action :disable_response_caching
 
     ADMIN_LIMIT = 30
+    CORRELATION_GROUPS_PER_PAGE = 20
+    SHARED_IP_GROUPS_PER_PAGE = 20
+    GROUP_PAIR_PREVIEW_LIMIT = 20
 
     def overview
       health = Health.payload
@@ -54,6 +59,7 @@ module ::AccountSecurity
       status = params.require(:status).to_s
       raise Discourse::InvalidParameters.new(:status) unless RiskEvent::STATUSES.include?(status)
       reason = clean_optional(params[:resolution_reason], 240)
+      previous_status = event.status.to_s
       event.update!(
         status: status,
         reviewed_by_id: current_user.id,
@@ -61,6 +67,14 @@ module ::AccountSecurity
         resolution_reason: reason,
       )
       StaffAudit.log!(actor: current_user, action: "event_review_changed", details: { event_id: event.id, status: status })
+      RiskEventAuditTrail.record!(
+        event: event,
+        action: "review_changed",
+        actor: current_user,
+        from_status: previous_status,
+        to_status: status,
+        details: { resolution_reason: reason },
+      )
       render_json_dump(success: true, event: serialize_event(event.reload, detail: true))
     end
 
@@ -75,6 +89,9 @@ module ::AccountSecurity
         allow_remote: true,
       )
 
+      previous_risk = event.risk_level.to_s
+      previous_severity = event.severity.to_s
+      previous_evidence = event.evidence_strength.to_s
       if result.intelligence
         refreshed_evidence =
           if event.event_type.in?(%w[auth_failure_cluster registration_abuse_cluster])
@@ -94,6 +111,21 @@ module ::AccountSecurity
       end
 
       StaffAudit.log!(actor: current_user, action: "event_refreshed", details: { event_id: event.id, result: result.source || result.reason })
+      RiskEventAuditTrail.record!(
+        event: event,
+        action: "intelligence_refreshed",
+        actor: current_user,
+        details: {
+          risk_level_from: previous_risk,
+          risk_level_to: event.risk_level.to_s,
+          severity_from: previous_severity,
+          severity_to: event.severity.to_s,
+          evidence_from: previous_evidence,
+          evidence_to: event.evidence_strength.to_s,
+          source: result.source || result.reason,
+          result: result.success ? "success" : "failed",
+        },
+      )
       render_json_dump(
         success: result.success,
         reason: result.reason,
@@ -188,14 +220,9 @@ module ::AccountSecurity
         raise Discourse::InvalidParameters.new(:confidence)
       end
 
-      scope = AccountCorrelation.includes(:user_a, :user_b, :reviewed_by, :primary_user).order(score: :desc, last_seen_at: :desc, id: :desc)
-      scope = scope.where(status: status) if status.present?
-      scope = scope.where(confidence: confidence) if confidence.present?
-      if search.present?
-        pattern = "%#{ActiveRecord::Base.sanitize_sql_like(search.downcase)}%"
-        ids = User.where("username_lower LIKE ?", pattern).limit(100).pluck(:id)
-        scope = scope.where("user_a_id IN (:ids) OR user_b_id IN (:ids)", ids: ids.presence || [-1])
-      end
+      focus_pair_id = positive_integer_value(params[:pair_id])
+      scope = correlation_scope(status: status, confidence: confidence, search: search)
+      scope = AccountCorrelation.includes(:user_a, :user_b, :reviewed_by, :primary_user).where(id: focus_pair_id) if focus_pair_id
 
       total = scope.count
       scoring_refresh_required = AccountCorrelation.where(
@@ -214,20 +241,24 @@ module ::AccountSecurity
       items = scope.offset((page - 1) * per_page).limit(per_page).to_a
       review_history = CorrelationInvestigationService.history_for(items.map(&:id))
       policy_action_state = CorrelationPolicyActions.state_for(items.map(&:id))
-      group_index = AccountGroupBuilder.build_index
+      include_group_context = params[:include_group_context].to_s != "false"
+      group_index = include_group_context ? AccountGroupBuilder.build_index : nil
       serialized_items = items.map do |item|
-        serialize_correlation(
+        payload = serialize_correlation(
           item,
           review_history: review_history[item.id],
           policy_action_state: policy_action_state.fetch(item.id, []),
-        ).merge(
-          account_group_key: group_index[:pair_to_group][item.id],
         )
+        include_group_context ? payload.merge(account_group_key: group_index[:pair_to_group][item.id]) : payload
       end
-      relevant_group_keys = serialized_items.filter_map { |item| item[:account_group_key] }.uniq
-      relevant_groups = relevant_group_keys.filter_map { |key| group_index[:groups_by_key][key] }
-      group_user_ids = relevant_groups.flat_map { |group| group[:user_ids] }.uniq
-      group_users = User.where(id: group_user_ids).index_by(&:id)
+      relevant_groups = []
+      group_users = {}
+      if include_group_context
+        relevant_group_keys = serialized_items.filter_map { |item| item[:account_group_key] }.uniq
+        relevant_groups = relevant_group_keys.filter_map { |key| group_index[:groups_by_key][key] }
+        group_user_ids = relevant_groups.flat_map { |group| group[:user_ids] }.uniq
+        group_users = User.where(id: group_user_ids).index_by(&:id)
+      end
 
       render_json_dump(
         enabled: SiteSetting.account_security_account_correlation_enabled,
@@ -241,8 +272,97 @@ module ::AccountSecurity
         scan: serialize_correlation_scan(AccountCorrelationScanner.status),
         schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
         account_groups: relevant_groups.map { |group| serialize_account_group(group, group_users) },
-        account_groups_truncated: group_index[:source_pair_limit_reached] == true,
+        account_groups_truncated: include_group_context && group_index[:source_pair_limit_reached] == true,
         items: serialized_items,
+      )
+    end
+
+
+    def correlation_groups
+      page = positive_integer_value(params[:page]) || 1
+      status, confidence, search = correlation_filter_values
+
+      # Derive the account graph from the complete bounded pair source first. A
+      # search or status/confidence filter may decide whether a group is shown,
+      # but must not change the membership or identity of that derived group.
+      group_index = AccountGroupBuilder.build_index
+      groups = group_index[:groups]
+      if status.present? || confidence.present? || search.present?
+        source_pair_ids = groups.flat_map { |group| Array(group[:pair_ids]) }.uniq
+        matching_pair_ids =
+          if source_pair_ids.empty?
+            Set.new
+          else
+            correlation_scope(
+              status: status,
+              confidence: confidence,
+              search: search,
+              include_users: false,
+            ).where(id: source_pair_ids).pluck(:id).map(&:to_i).to_set
+          end
+        groups = groups.select do |group|
+          Array(group[:pair_ids]).any? { |pair_id| matching_pair_ids.include?(pair_id.to_i) }
+        end
+      end
+
+      total = groups.length
+      max_page = [(total.to_f / CORRELATION_GROUPS_PER_PAGE).ceil, 1].max
+      page = [page, max_page].min
+      selected = groups.slice((page - 1) * CORRELATION_GROUPS_PER_PAGE, CORRELATION_GROUPS_PER_PAGE) || []
+
+      user_ids = selected.flat_map { |group| group[:user_ids] }.uniq
+      users_by_id = User.where(id: user_ids).index_by(&:id)
+      preview_ids = selected.flat_map { |group| Array(group[:pair_ids]).first(GROUP_PAIR_PREVIEW_LIMIT) }.uniq
+      preview_pairs =
+        AccountCorrelation
+          .includes(:user_a, :user_b)
+          .where(id: preview_ids)
+          .index_by(&:id)
+
+      render_json_dump(
+        page: page,
+        per_page: CORRELATION_GROUPS_PER_PAGE,
+        total: total,
+        account_groups_truncated: group_index[:source_pair_limit_reached] == true,
+        account_groups: selected.map do |group|
+          serialize_account_group(group, users_by_id).merge(
+            pairs: Array(group[:pair_ids]).first(GROUP_PAIR_PREVIEW_LIMIT).filter_map do |pair_id|
+              pair = preview_pairs[pair_id.to_i]
+              serialize_compact_correlation(pair) if pair
+            end,
+            pairs_truncated: Array(group[:pair_ids]).length > GROUP_PAIR_PREVIEW_LIMIT,
+          )
+        end,
+      )
+    end
+
+    def correlation_shared_ips
+      page = positive_integer_value(params[:page]) || 1
+      status, confidence, search = correlation_filter_values
+      scope = correlation_scope(status: status, confidence: confidence, search: search, include_users: false)
+      search_user_ids = search.present? ? matching_correlation_user_ids(search) : nil
+      result = SharedIpGroupBuilder.build(
+        page: page,
+        per_page: SHARED_IP_GROUPS_PER_PAGE,
+        correlation_scope: scope,
+        search_user_ids: search_user_ids,
+        pair_filters_applied: status.present? || confidence.present?,
+      )
+
+      pair_user_ids = result[:groups].flat_map do |group|
+        Array(group[:pairs]).flat_map { |pair| [pair[:user_a_id], pair[:user_b_id]] }
+      end.uniq
+      pair_users = User.where(id: pair_user_ids).index_by(&:id)
+
+      render_json_dump(
+        page: result[:page],
+        per_page: result[:per_page],
+        total: result[:total],
+        source_complete: result[:source_complete],
+        diagnostics: result[:diagnostics],
+        filter_truncated: result[:filter_truncated],
+        pair_preview_truncated: result[:pair_preview_truncated],
+        shared_ip_groups: result[:groups].map { |group| serialize_shared_ip_group(group, pair_users) },
       )
     end
 
@@ -433,8 +553,24 @@ module ::AccountSecurity
     end
 
     def trusted_networks
-      items = TrustedNetwork.includes(:created_by).order(id: :desc).limit(500)
-      render_json_dump(items: items.map { |item| serialize_trusted_network(item) })
+      page = positive_integer_value(params[:page]) || 1
+      per_page = 50
+      search = clean_optional(params[:search], 80)
+      scope = TrustedNetwork.includes(:created_by).order(id: :desc)
+      if search.present?
+        pattern = "%#{ActiveRecord::Base.sanitize_sql_like(search.downcase)}%"
+        scope = scope.where(
+          "LOWER(account_security_trusted_networks.network::text) LIKE :pattern OR " \
+            "LOWER(account_security_trusted_networks.label) LIKE :pattern OR " \
+            "LOWER(account_security_trusted_networks.reason) LIKE :pattern",
+          pattern: pattern,
+        )
+      end
+      total = scope.count
+      max_page = [(total.to_f / per_page).ceil, 1].max
+      page = [page, max_page].min
+      items = scope.offset((page - 1) * per_page).limit(per_page).to_a
+      render_json_dump(page: page, per_page: per_page, total: total, items: items.map { |item| serialize_trusted_network(item) })
     end
 
     def create_trusted_network
@@ -587,6 +723,38 @@ module ::AccountSecurity
       value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max).presence
     end
 
+    def correlation_filter_values
+      status = params[:status].to_s
+      confidence = params[:confidence].to_s
+      search = clean_optional(params[:search], 60)
+      raise Discourse::InvalidParameters.new(:status) if status.present? && !AccountCorrelation::STATUSES.include?(status)
+      if confidence.present? && !AccountCorrelation::CONFIDENCES.include?(confidence)
+        raise Discourse::InvalidParameters.new(:confidence)
+      end
+      [status, confidence, search]
+    end
+
+    def correlation_scope(status:, confidence:, search:, include_users: true)
+      scope = AccountCorrelation.all
+      scope = scope.includes(:user_a, :user_b, :reviewed_by, :primary_user) if include_users
+      scope = scope.where(status: status) if status.present?
+      scope = scope.where(confidence: confidence) if confidence.present?
+      if search.present?
+        pattern = "%#{ActiveRecord::Base.sanitize_sql_like(search.downcase)}%"
+        scope = scope.where(
+          "user_a_id IN (SELECT id FROM users WHERE username_lower LIKE :pattern) OR " \
+            "user_b_id IN (SELECT id FROM users WHERE username_lower LIKE :pattern)",
+          pattern: pattern,
+        )
+      end
+      scope.order(score: :desc, last_seen_at: :desc, id: :desc)
+    end
+
+    def matching_correlation_user_ids(search)
+      pattern = "%#{ActiveRecord::Base.sanitize_sql_like(search.to_s.downcase)}%"
+      User.where("username_lower LIKE ?", pattern).pluck(:id).map(&:to_i).select(&:positive?)
+    end
+
     def parse_optional_time(value)
       return nil if value.blank?
       parsed = Time.zone.parse(value.to_s)
@@ -603,6 +771,8 @@ module ::AccountSecurity
       {
         event: serialize_event(event, detail: true),
         intelligence: serialize_intelligence(event.ip_intelligence),
+        intelligence_snapshot: serialize_event_intelligence_snapshot(event.intelligence_snapshot),
+        audit_history: RiskEventAuditTrail.history_for(event.id).map { |audit| serialize_risk_event_audit(audit) },
         network_context: serialize_network_context(NetworkContext.for_ip(event.ip_address, locale: I18n.locale)),
         temporary_block: serialize_temporary_block(temporary_block),
         notification_suppression: serialize_notification_suppression(notification_suppression),
@@ -652,6 +822,42 @@ module ::AccountSecurity
         reviewed_by: event.reviewed_by && { id: event.reviewed_by.id, username: event.reviewed_by.username },
       }
       payload
+    end
+
+    def serialize_event_intelligence_snapshot(value)
+      snapshot = value.is_a?(Hash) ? value : {}
+      return nil if snapshot.blank?
+
+      {
+        version: snapshot["version"].to_i,
+        captured_at: clean_optional(snapshot["captured_at"], 40),
+        risk_level: clean_optional(snapshot["risk_level"], 20),
+        evidence_strength: clean_optional(snapshot["evidence_strength"], 20),
+        provider_data_available: snapshot["provider_data_available"] == true,
+        primary_score: nonnegative_integer_or_nil(snapshot["primary_score"]),
+        total_reports: nonnegative_integer_or_nil(snapshot["total_reports"]),
+        distinct_reporters: nonnegative_integer_or_nil(snapshot["distinct_reporters"]),
+        last_reported_at: clean_optional(snapshot["last_reported_at"], 40),
+        usage_type: clean_optional(snapshot["usage_type"], 120),
+        isp: clean_optional(snapshot["isp"], 160),
+        domain: clean_optional(snapshot["domain"], 160),
+        country_code: clean_optional(snapshot["country_code"], 2),
+        is_tor: snapshot["is_tor"] == true,
+        local_blacklist_match: snapshot["local_blacklist_match"] == true,
+        provider_checked_at: clean_optional(snapshot["provider_checked_at"], 40),
+      }.compact
+    end
+
+    def serialize_risk_event_audit(audit)
+      {
+        id: audit.id,
+        action: audit.action,
+        from_status: audit.from_status,
+        to_status: audit.to_status,
+        details: audit.details.is_a?(Hash) ? audit.details : {},
+        created_at: audit.created_at&.iso8601,
+        actor: audit.actor_user && { id: audit.actor_user.id, username: audit.actor_user.username },
+      }
     end
 
     def serialize_intelligence(record)
@@ -752,6 +958,69 @@ module ::AccountSecurity
             direct_relation_count: group.dig(:account_degrees, user.id).to_i,
           )
         end,
+      }
+    end
+
+    def serialize_compact_correlation(item)
+      return nil unless item
+      evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
+      {
+        id: item.id,
+        score: item.score.to_i,
+        confidence: item.confidence,
+        status: item.status,
+        context_only: AccountCorrelationPolicy.context_only?(evidence),
+        context_only_reason: AccountCorrelationPolicy.context_only?(evidence) ? AccountCorrelationPolicy.context_only_reason(evidence) : nil,
+        user_a: serialize_correlation_user(item.user_a),
+        user_b: serialize_correlation_user(item.user_b),
+      }
+    end
+
+    def serialize_shared_ip_group(group, pair_users)
+      ip = IpNormalizer.normalize(group[:ip_address])
+      context = NetworkContext.for_ip(ip, locale: I18n.locale)
+      {
+        ip_address: ip,
+        total_accounts: group[:account_count].to_i,
+        accounts_truncated: group[:accounts_truncated] == true,
+        accounts: Array(group[:accounts]).filter_map do |row|
+          user = row[:user]
+          next unless user
+          serialize_correlation_user(user).merge(
+            sources: Array(row[:sources]).map(&:to_s) & CoreIpEvidence::SOURCES,
+          )
+        end,
+        pair_count: group[:pair_count].to_i,
+        pairs_truncated: group[:pairs_truncated] == true,
+        pairs: Array(group[:pairs]).filter_map do |row|
+          user_a = pair_users[row[:user_a_id].to_i]
+          user_b = pair_users[row[:user_b_id].to_i]
+          next unless user_a && user_b
+          evidence = row[:evidence].is_a?(Hash) ? row[:evidence] : {}
+          {
+            id: row[:id].to_i,
+            score: row[:score].to_i,
+            confidence: row[:confidence],
+            status: row[:status],
+            context_only: AccountCorrelationPolicy.context_only?(evidence),
+            context_only_reason: AccountCorrelationPolicy.context_only?(evidence) ? AccountCorrelationPolicy.context_only_reason(evidence) : nil,
+            user_a: serialize_correlation_user(user_a),
+            user_b: serialize_correlation_user(user_b),
+          }
+        end,
+        max_score: group[:max_score].to_i,
+        registration_account_count: group[:registration_account_count].to_i,
+        auth_account_count: group[:auth_account_count].to_i,
+        temporal_aligned_pair_count: group[:temporal_aligned_pair_count].to_i,
+        public: group[:public] == true,
+        trusted: group[:trusted] == true,
+        tor: group[:tor] == true,
+        local_blacklist: group[:local_blacklist] == true,
+        hosting: group[:hosting] == true,
+        mobile: group[:mobile] == true,
+        usage_type: clean_optional(group[:usage_type], 80),
+        isp: clean_optional(group[:isp], 160),
+        network_context: serialize_network_context(context),
       }
     end
 

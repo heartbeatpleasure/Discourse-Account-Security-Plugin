@@ -20,6 +20,11 @@ const REASON_KEYS = {
   abuseipdb_blacklist_error: "blacklist_error",
   abuseipdb_blacklist_stale: "blacklist_stale",
   notification_groups_missing: "notification_groups_missing",
+  correlation_scan_failed: "correlation_scan_failed",
+  correlation_scan_stale: "correlation_scan_stale",
+  correlation_schedule_overdue: "correlation_schedule_overdue",
+  correlation_scheduler_failed: "correlation_scheduler_failed",
+  correlation_health_failed: "correlation_health_failed",
   database_initializing: "database_initializing",
 };
 
@@ -48,6 +53,41 @@ export default class AdminPluginsAccountSecurityHealthController extends Control
     return i18n(`admin.account_security.correlations.frequencies.${key}`);
   }
 
+  get correlationHealth() {
+    const value = this.data?.correlation;
+    if (!value) { return null; }
+    const allowedStates = ["disabled", "initializing", "healthy", "busy", "degraded"];
+    const state = allowedStates.includes(value.state) ? value.state : "unknown";
+    const allowedScanStates = ["never", "disabled", "queued", "running", "completed", "failed", "unknown"];
+    const scanState = allowedScanStates.includes(value.scan?.state)
+      ? value.scan.state
+      : "unknown";
+    return {
+      ...value,
+      state_label: i18n(`admin.account_security.health.correlation_states.${state}`),
+      scan: value.scan
+        ? {
+            ...value.scan,
+            state_label: i18n(`admin.account_security.health.correlation_scan_states.${scanState}`),
+            queued_at_display: formatAccountSecurityDateTime(value.scan.queued_at),
+            started_at_display: formatAccountSecurityDateTime(value.scan.started_at),
+            heartbeat_at_display: formatAccountSecurityDateTime(value.scan.heartbeat_at),
+            completed_at_display: formatAccountSecurityDateTime(value.scan.completed_at),
+            last_success_at_display: formatAccountSecurityDateTime(value.scan.last_success_at),
+            last_failure_at_display: formatAccountSecurityDateTime(value.scan.last_failure_at),
+          }
+        : null,
+      schedule: value.schedule
+        ? {
+            ...value.schedule,
+            next_run_at_display: formatAccountSecurityDateTime(value.schedule.next_run_at),
+            last_scheduled_at_display: formatAccountSecurityDateTime(value.schedule.last_scheduled_at),
+            expected_slot_at_display: formatAccountSecurityDateTime(value.schedule.expected_slot_at),
+          }
+        : null,
+    };
+  }
+
   get localNetworkContext() {
     const context = this.data?.local_network_context;
     if (!context) {
@@ -67,6 +107,15 @@ export default class AdminPluginsAccountSecurityHealthController extends Control
 
   get overallReasonText() {
     const reason = this.data?.overall_reason;
+    if (!reason) {
+      return null;
+    }
+    const key = REASON_KEYS[reason] || "generic";
+    return i18n(`admin.account_security.health.reasons.${key}`);
+  }
+
+  get correlationReasonText() {
+    const reason = this.data?.correlation?.reason;
     if (!reason) {
       return null;
     }

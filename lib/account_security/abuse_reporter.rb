@@ -52,6 +52,16 @@ module ::AccountSecurity
           provider_status: result.status,
           reported_at: result.success ? Time.zone.now : nil,
         )
+        RiskEventAuditTrail.record!(
+          event: event,
+          action: result.success ? "abuse_reported" : "abuse_report_attempted",
+          actor: actor,
+          details: {
+            provider_report_id: record.id,
+            provider_status: result.status.to_i,
+            result: result.success ? "reported" : "failed",
+          },
+        )
 
         {
           success: result.success,

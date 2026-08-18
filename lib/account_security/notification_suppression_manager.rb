@@ -42,6 +42,12 @@ module ::AccountSecurity
         action: "notification_suppression_created",
         details: { event_id: event.id, notification_suppression_id: record.id, duration_hours: hours },
       )
+      RiskEventAuditTrail.record!(
+        event: event,
+        action: "notification_suppression_created",
+        actor: actor,
+        details: { notification_suppression_id: record.id, duration_hours: hours },
+      )
       record
     end
 
@@ -56,6 +62,12 @@ module ::AccountSecurity
         actor: actor,
         action: "notification_suppression_released",
         details: { event_id: event.id, notification_suppression_id: id },
+      )
+      RiskEventAuditTrail.record!(
+        event: event,
+        action: "notification_suppression_released",
+        actor: actor,
+        details: { notification_suppression_id: id },
       )
       record
     end

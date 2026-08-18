@@ -19,8 +19,8 @@ module ::AccountSecurity
       "very_strong" => 3,
     }.freeze
 
-    def build_index
-      rows, source_pair_limit_reached = load_rows
+    def build_index(scope: nil)
+      rows, source_pair_limit_reached = load_rows(scope: scope)
       return empty_index.merge(source_pair_limit_reached: source_pair_limit_reached) if rows.blank?
 
       parent = {}
@@ -64,10 +64,11 @@ module ::AccountSecurity
       empty_index
     end
 
-    def load_rows
+    def load_rows(scope: nil)
+      relation = scope || AccountCorrelation.all
       raw_rows =
-        AccountCorrelation
-          .order(last_seen_at: :desc, id: :desc)
+        relation
+          .reorder(last_seen_at: :desc, id: :desc)
           .limit(MAX_SOURCE_PAIRS + 1)
           .pluck(:id, :user_a_id, :user_b_id, :score, :confidence, :status, :evidence)
       source_pair_limit_reached = raw_rows.length > MAX_SOURCE_PAIRS

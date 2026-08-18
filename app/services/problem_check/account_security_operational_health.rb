@@ -41,6 +41,11 @@ class ProblemCheck::AccountSecurityOperationalHealth < ProblemCheck
       "abuseipdb_blacklist_error" => "AbuseIPDB blacklist reported an error",
       "abuseipdb_blacklist_stale" => "AbuseIPDB blacklist is stale",
       "notification_groups_missing" => "Staff notifications are enabled without a recipient group",
+      "correlation_scan_failed" => "The latest account-correlation scan failed",
+      "correlation_scan_stale" => "A correlation scan became stale and requires a fresh scan",
+      "correlation_schedule_overdue" => "The automatic account-correlation scan is overdue",
+      "correlation_scheduler_failed" => "The account-correlation scheduler health check failed",
+      "correlation_health_failed" => "Account-correlation health could not be evaluated",
     }[reason] || (status == "degraded" ? "A local intelligence feed requires attention" : "Operational health requires attention")
   end
 end

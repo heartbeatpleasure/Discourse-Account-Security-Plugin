@@ -148,6 +148,19 @@ export default RouteTemplate(
         background: var(--danger-low, var(--primary-very-low));
       }
       .as-page__stack { display: grid; gap: .75rem; }
+      .as-page__audit-list { display: grid; gap: .6rem; }
+      .as-page__audit-item {
+        display: grid;
+        grid-template-columns: minmax(11rem, .8fr) minmax(12rem, 1fr) minmax(0, 2fr);
+        gap: .6rem 1rem;
+        padding: .75rem .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--as-surface-alt);
+      }
+      .as-page__audit-action { font-weight: 700; }
+      .as-page__audit-meta { color: var(--as-muted); font-size: var(--font-down-1); }
+      .as-page__audit-detail { min-width: 0; overflow-wrap: anywhere; }
       .as-page__checkbox { display: flex; align-items: flex-start; gap: .5rem; }
       .as-page__checkbox input { flex: 0 0 auto; margin-top: .2rem; }
       .as-page__section-title { display: grid; gap: .25rem; margin-bottom: .8rem; }
@@ -160,6 +173,7 @@ export default RouteTemplate(
         .as-page__panel-header { flex-direction: column; }
         .as-page__metrics, .as-page__grid { grid-template-columns: 1fr; }
         .as-page__field { flex-basis: 100%; }
+        .as-page__audit-item { grid-template-columns: 1fr; }
       }
     </style>
     <div class="as-page">
@@ -222,9 +236,38 @@ export default RouteTemplate(
         </section>
       {{/if}}
 
+      <section class="as-page__panel">
+        <div class="as-page__section-title">
+          <h2>{{i18n "admin.account_security.event_detail.intelligence_snapshot_title"}}</h2>
+          <p class="as-page__muted">{{i18n "admin.account_security.event_detail.intelligence_snapshot_description"}}</p>
+        </div>
+        {{#if @controller.data.intelligence_snapshot}}
+          <div class="as-page__grid">
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.snapshot_captured"}}</div><div class="as-page__value">{{@controller.data.intelligence_snapshot.captured_at_display}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.snapshot_risk"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.risk_level @controller.data.intelligence_snapshot.risk_level "—"}}</div></div>
+            <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.snapshot_evidence"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.evidence_strength @controller.data.intelligence_snapshot.evidence_strength "—"}}</div></div>
+            {{#if @controller.data.intelligence_snapshot.provider_data_available}}
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.score"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.primary_score @controller.data.intelligence_snapshot.primary_score "0"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.total_reports"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.total_reports @controller.data.intelligence_snapshot.total_reports "0"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.distinct_reporters"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.distinct_reporters @controller.data.intelligence_snapshot.distinct_reporters "0"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.usage_type"}}</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.usage_type @controller.data.intelligence_snapshot.usage_type "—"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">ISP</div><div class="as-page__value">{{if @controller.data.intelligence_snapshot.isp @controller.data.intelligence_snapshot.isp "—"}}</div></div>
+            {{/if}}
+          </div>
+          {{#unless @controller.data.intelligence_snapshot.provider_data_available}}
+            <div class="as-page__notice" style="margin-top: .75rem;">{{i18n "admin.account_security.event_detail.intelligence_snapshot_no_provider"}}</div>
+          {{/unless}}
+        {{else}}
+          <div class="as-page__notice">{{i18n "admin.account_security.event_detail.intelligence_snapshot_unavailable"}}</div>
+        {{/if}}
+      </section>
+
       {{#if @controller.data.intelligence}}
         <section class="as-page__panel">
-          <div class="as-page__section-title"><h2>{{i18n "admin.account_security.event_detail.intelligence"}}</h2></div>
+          <div class="as-page__section-title">
+            <h2>{{i18n "admin.account_security.event_detail.intelligence"}}</h2>
+            <p class="as-page__muted">{{i18n "admin.account_security.event_detail.current_intelligence_description"}}</p>
+          </div>
           <div class="as-page__grid">
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.score"}}</div><div class="as-page__value">{{@controller.data.intelligence.primary_score}}</div></div>
             <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.event_detail.total_reports"}}</div><div class="as-page__value">{{@controller.data.intelligence.total_reports}}</div></div>
@@ -251,6 +294,35 @@ export default RouteTemplate(
             <button class="btn btn-primary" type="button" disabled={{@controller.isWorking}} {{on "click" (fn @controller.review "actioned")}}>{{i18n "admin.account_security.event_detail.mark_actioned"}}</button>
           </div>
         </div>
+      </section>
+
+      <section class="as-page__panel">
+        <div class="as-page__section-title">
+          <h2>{{i18n "admin.account_security.event_detail.audit.title"}}</h2>
+          <p class="as-page__muted">{{i18n "admin.account_security.event_detail.audit.description"}}</p>
+        </div>
+        {{#if @controller.data.audit_history.length}}
+          <div class="as-page__audit-list">
+            {{#each @controller.data.audit_history as |audit|}}
+              <div class="as-page__audit-item">
+                <div>
+                  <div class="as-page__audit-action">{{audit.action_label}}</div>
+                  <div class="as-page__audit-meta">{{audit.created_at_display}}</div>
+                </div>
+                <div>
+                  <div class="as-page__label">{{i18n "admin.account_security.event_detail.audit.actor"}}</div>
+                  <div class="as-page__value">{{audit.actor_display}}</div>
+                </div>
+                <div class="as-page__audit-detail">
+                  {{#if audit.status_display}}<div>{{audit.status_display}}</div>{{/if}}
+                  {{#if audit.details_display}}<div class="as-page__muted">{{audit.details_display}}</div>{{/if}}
+                </div>
+              </div>
+            {{/each}}
+          </div>
+        {{else}}
+          <p class="as-page__muted">{{i18n "admin.account_security.event_detail.audit.empty"}}</p>
+        {{/if}}
       </section>
 
       <section class="as-page__grid">

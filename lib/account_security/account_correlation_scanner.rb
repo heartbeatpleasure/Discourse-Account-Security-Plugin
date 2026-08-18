@@ -8,7 +8,10 @@ module ::AccountSecurity
     module_function
 
     STATUS_KEY = "account_security:correlation_scan:status"
+    LAST_SUCCESS_KEY = "account_security:correlation_scan:last_success_at"
+    LAST_FAILURE_KEY = "account_security:correlation_scan:last_failure_at"
     STATUS_TTL = 30.days.to_i
+    HISTORY_TTL = 400.days.to_i
     MAX_GROUP_USERS = 20
     MAX_PAIR_CANDIDATES = 20_000
     SCAN_MUTEX_VALIDITY = 6.hours.to_i
@@ -157,13 +160,14 @@ module ::AccountSecurity
             diagnostics[:discovery_pairs_deduplicated_against_existing].to_i
 
         Statistics.increment!(correlation_scans: 1)
+        completed_at = Time.zone.now
         write_status(
           state: "completed",
           requested_by_id: requested_by_id,
           source: scan_source,
           started_at: started_at.iso8601,
-          completed_at: Time.zone.now.iso8601,
-          heartbeat_at: Time.zone.now.iso8601,
+          completed_at: completed_at.iso8601,
+          heartbeat_at: completed_at.iso8601,
           candidates_found: legacy_candidates_found(counters),
           token_signatures_backfilled: signature_count,
           truncated: truncated,
@@ -172,18 +176,21 @@ module ::AccountSecurity
           error_code: nil,
           **counters,
         )
+        write_history_timestamp(LAST_SUCCESS_KEY, completed_at)
       end
       status
     rescue StandardError => e
       Rails.logger.warn("[account_security] account correlation scan failed class=#{e.class}")
+      failed_at = Time.zone.now
       write_status(
         state: "failed",
         requested_by_id: requested_by_id,
         source: safe_source(source),
-        completed_at: Time.zone.now.iso8601,
-        heartbeat_at: Time.zone.now.iso8601,
+        completed_at: failed_at.iso8601,
+        heartbeat_at: failed_at.iso8601,
         error_code: "scan_failed",
       )
+      write_history_timestamp(LAST_FAILURE_KEY, failed_at)
       status
     end
 
@@ -191,14 +198,23 @@ module ::AccountSecurity
       current = read_status
       return current unless stale_status?(current)
 
+      recovered_at = Time.zone.now
       recovered = current.merge(
         state: "failed",
-        completed_at: Time.zone.now.iso8601,
+        completed_at: recovered_at.iso8601,
         error_code: "scan_stale",
         stale_recovered: true,
       )
       persist_status(recovered)
+      write_history_timestamp(LAST_FAILURE_KEY, recovered_at)
       recovered
+    end
+
+    def health_history
+      {
+        last_success_at: read_history_timestamp(LAST_SUCCESS_KEY),
+        last_failure_at: read_history_timestamp(LAST_FAILURE_KEY),
+      }.compact
     end
 
     # Compatibility/introspection helper. The actual full scan processes every
@@ -407,6 +423,20 @@ module ::AccountSecurity
 
     def persist_status(payload)
       Discourse.redis.set(STATUS_KEY, payload.to_json, ex: STATUS_TTL)
+    end
+
+    def write_history_timestamp(key, time)
+      Discourse.redis.set(key, time.utc.iso8601, ex: HISTORY_TTL)
+    rescue StandardError => e
+      Rails.logger.warn("[account_security] correlation scan health history write failed class=#{e.class}")
+    end
+
+    def read_history_timestamp(key)
+      value = Discourse.redis.get(key)
+      parsed = parse_status_time(value)
+      parsed&.iso8601
+    rescue StandardError
+      nil
     end
 
     def safe_source(value)

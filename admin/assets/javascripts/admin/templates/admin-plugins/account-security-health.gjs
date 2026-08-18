@@ -221,6 +221,32 @@ export default RouteTemplate(
           </div>
         </section>
 
+        {{#if @controller.correlationHealth}}
+          <section class="as-page__panel">
+            <div class="as-page__section-title">
+              <h2>{{i18n "admin.account_security.health.correlation_health_title"}}</h2>
+              <p class="as-page__muted">{{i18n "admin.account_security.health.correlation_health_description"}}</p>
+            </div>
+            <div class="as-page__grid">
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_health_state"}}</div><div class="as-page__value">{{@controller.correlationHealth.state_label}}</div></div>
+              {{#if @controller.correlationHealth.scan}}
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_scan_state"}}</div><div class="as-page__value">{{@controller.correlationHealth.scan.state_label}}</div>{{#if @controller.correlationHealth.scan.completed_at_display}}<div class="as-page__muted">{{@controller.correlationHealth.scan.completed_at_display}}</div>{{/if}}</div>
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_last_success"}}</div><div class="as-page__value">{{if @controller.correlationHealth.scan.last_success_at_display @controller.correlationHealth.scan.last_success_at_display "—"}}</div></div>
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_last_failure"}}</div><div class="as-page__value">{{if @controller.correlationHealth.scan.last_failure_at_display @controller.correlationHealth.scan.last_failure_at_display "—"}}</div></div>
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_pairs_processed"}}</div><div class="as-page__value">{{@controller.correlationHealth.scan.pairs_processed}}</div></div>
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_pairs_failed"}}</div><div class="as-page__value">{{@controller.correlationHealth.scan.pairs_failed}}</div></div>
+              {{/if}}
+              {{#if @controller.correlationHealth.schedule}}
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_next_run"}}</div><div class="as-page__value">{{if @controller.correlationHealth.schedule.next_run_at_display @controller.correlationHealth.schedule.next_run_at_display "—"}}</div></div>
+                <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.health.correlation_last_scheduled"}}</div><div class="as-page__value">{{if @controller.correlationHealth.schedule.last_scheduled_at_display @controller.correlationHealth.schedule.last_scheduled_at_display "—"}}</div></div>
+              {{/if}}
+            </div>
+            {{#if @controller.correlationHealth.reason}}
+              <div class="as-page__warning" style="margin-top: .75rem;">{{@controller.correlationReasonText}}</div>
+            {{/if}}
+          </section>
+        {{/if}}
+
         {{#if @controller.localNetworkContext}}
           <section class="as-page__panel">
             <div class="as-page__section-title">

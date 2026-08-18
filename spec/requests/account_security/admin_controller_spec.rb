@@ -19,6 +19,8 @@ RSpec.describe AccountSecurity::AdminController do
       [:delete, "/admin/plugins/account-security/events/1/notification-suppression.json", {}],
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/correlations.json", {}],
+      [:get, "/admin/plugins/account-security/correlations/groups.json", {}],
+      [:get, "/admin/plugins/account-security/correlations/shared-ips.json", {}],
       [:get, "/admin/plugins/account-security/correlations/scan-status.json", {}],
       [:get, "/admin/plugins/account-security/scoring-calibration.json", {}],
       [:put, "/admin/plugins/account-security/scoring-calibration.json", { profile: {} }],
@@ -353,4 +355,180 @@ RSpec.describe AccountSecurity::AdminController do
   end
 
 
+end
+
+RSpec.describe AccountSecurity::AdminController, "v0.21 functional completion" do
+  fab!(:admin)
+
+  before do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    SiteSetting.account_security_user_notes_enabled = false
+    SiteSetting.account_security_staff_notifications_enabled = false
+  end
+
+  def correlation_between(left, right, score: 50, confidence: "strong", status: "open", ip: "8.8.8.8")
+    user_a_id, user_b_id = [left.id, right.id].sort
+    AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: score,
+      confidence: confidence,
+      status: status,
+      evidence: {
+        "shared_exact_ip_count" => 1,
+        "shared_public_ip_count" => 1,
+        "shared_ip_details" => [
+          {
+            "ip_address" => ip,
+            "public" => true,
+            "sources_a" => ["registration"],
+            "sources_b" => ["registration"],
+          },
+        ],
+      },
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+  end
+
+  it "serves Account Groups independently from the currently loaded pair page" do
+    users = 3.times.map { Fabricate(:user) }
+    correlation_between(users[0], users[1])
+    correlation_between(users[0], users[2])
+    correlation_between(users[1], users[2])
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations/groups.json", params: { page: 1 }
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["total"]).to eq(1)
+    group = response.parsed_body.fetch("account_groups").first
+    expect(group.fetch("accounts").map { |row| row["id"] }.sort).to eq(users.map(&:id).sort)
+    expect(group.fetch("pairs").length).to eq(3)
+  end
+
+  it "keeps a derived Account Group complete when a username filter matches one direct relationship" do
+    first = Fabricate(:user)
+    middle = Fabricate(:user)
+    last = Fabricate(:user)
+    correlation_between(first, middle)
+    correlation_between(middle, last)
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations/groups.json",
+        params: { page: 1, search: first.username }
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["total"]).to eq(1)
+    group = response.parsed_body.fetch("account_groups").first
+    expect(group.fetch("accounts").map { |row| row["id"] }.sort).to eq([first.id, middle.id, last.id].sort)
+    expect(group.fetch("pairs").length).to eq(2)
+  end
+
+  it "serves Shared IP groups for two or more accounts from local IP evidence even when no pair record was expanded" do
+    users = 2.times.map { Fabricate(:user) }
+    users.each do |user|
+      user.update_columns(registration_ip_address: "10.42.0.1", ip_address: "10.42.0.1")
+    end
+
+    expect(AccountSecurity::AccountCorrelation.count).to eq(0)
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations/shared-ips.json", params: { page: 1 }
+
+    expect(response.status).to eq(200)
+    group = response.parsed_body.fetch("shared_ip_groups").find { |row| row["ip_address"] == "10.42.0.1" }
+    expect(group).to be_present
+    expect(group["total_accounts"]).to eq(2)
+    expect(group["pairs"]).to eq([])
+  end
+
+  it "can fetch an exact notification-deeplink pair without depending on pagination or the active filters" do
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    pair = correlation_between(first, second)
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations.json",
+        params: { pair_id: pair.id, search: "definitely-not-a-match", page: 99, include_group_context: false }
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["total"]).to eq(1)
+    expect(response.parsed_body.dig("items", 0, "id")).to eq(pair.id)
+  end
+
+  it "returns immutable event-time intelligence separately from current provider intelligence and audit history" do
+    user = Fabricate(:user)
+    intelligence = AccountSecurity::IpIntelligence.create!(
+      ip_address: "9.9.9.9",
+      risk_level: "high",
+      evidence_strength: "strong",
+      primary_score: 81,
+      total_reports: 11,
+      distinct_reporters: 5,
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+      provider_checked_at: Time.zone.now,
+      next_check_after: 1.hour.from_now,
+    )
+    event = AccountSecurity::EventRecorder.record!(
+      user: user,
+      ip: "9.9.9.9",
+      intelligence: intelligence,
+      trigger: "login",
+      new_network: true,
+      familiarity_network: "9.9.9.9/32",
+    )
+    intelligence.update!(primary_score: 20, total_reports: 2)
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/events/#{event.id}.json"
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body.dig("intelligence_snapshot", "primary_score")).to eq(81)
+    expect(response.parsed_body.dig("intelligence", "primary_score")).to eq(20)
+    expect(response.parsed_body.fetch("audit_history").map { |row| row["action"] }).to include("event_created")
+
+    put "/admin/plugins/account-security/events/#{event.id}.json",
+        params: { status: "monitor", resolution_reason: "Continue observing." }
+    expect(response.status).to eq(200)
+
+    get "/admin/plugins/account-security/events/#{event.id}.json"
+    actions = response.parsed_body.fetch("audit_history").map { |row| row["action"] }
+    expect(actions).to include("review_changed", "event_created")
+  end
+
+  it "paginates and searches Trusted Networks instead of silently cutting the list at 500" do
+    51.times do |index|
+      AccountSecurity::TrustedNetwork.create!(
+        network: "10.200.#{index / 250}.#{(index % 250) + 1}/32",
+        label: index == 50 ? "Special office network" : "Network #{index}",
+        reason: "Test #{index}",
+        scope: "bypass_lookup_and_enforcement",
+        created_by_id: admin.id,
+      )
+    end
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/trusted-networks.json", params: { page: 1 }
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["total"]).to eq(51)
+    expect(response.parsed_body["items"].length).to eq(50)
+
+    get "/admin/plugins/account-security/trusted-networks.json", params: { page: 2 }
+    expect(response.parsed_body["items"].length).to eq(1)
+
+    get "/admin/plugins/account-security/trusted-networks.json", params: { search: "special office" }
+    expect(response.parsed_body["total"]).to eq(1)
+    expect(response.parsed_body.dig("items", 0, "label")).to eq("Special office network")
+  end
+
+  it "does not impose the old 100-user ceiling on username matches" do
+    relation = instance_double(ActiveRecord::Relation)
+    expect(User).to receive(:where).with("username_lower LIKE ?", "%needle%").and_return(relation)
+    expect(relation).to receive(:pluck).with(:id).and_return((1..150).to_a)
+
+    ids = described_class.new.send(:matching_correlation_user_ids, "needle")
+    expect(ids.length).to eq(150)
+  end
 end

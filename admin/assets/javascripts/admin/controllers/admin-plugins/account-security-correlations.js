@@ -17,6 +17,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @tracked confidence = "";
   @tracked search = "";
   @tracked page = 1;
+  @tracked groupPage = 1;
+  @tracked sharedIpPage = 1;
+  @tracked focusedPairId = null;
   @tracked activeView = "groups";
   @tracked viewInitialized = false;
   @tracked calibrationOpen = false;
@@ -40,8 +43,11 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.confidence = "";
     this.search = "";
     this.page = 1;
-    this.activeView = "groups";
-    this.viewInitialized = false;
+    this.groupPage = 1;
+    this.sharedIpPage = 1;
+    this.focusedPairId = this.pairIdFromUrl();
+    this.activeView = this.focusedPairId ? "pairs" : "groups";
+    this.viewInitialized = Boolean(this.focusedPairId);
     this.calibrationOpen = false;
     this.calibrationLoading = false;
     this.calibrationSaving = false;
@@ -49,6 +55,28 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.calibrationFields = [];
     this.calibrationPreview = undefined;
     this.calibrationPreviewLimit = 2000;
+  }
+
+  pairIdFromUrl() {
+    try {
+      const value = Number(new URL(window.location.href).searchParams.get("pair_id"));
+      return Number.isInteger(value) && value > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  clearFocusedPair() {
+    this.focusedPairId = null;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("pair_id")) {
+        url.searchParams.delete("pair_id");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch {
+      // URL cleanup is best effort only.
+    }
   }
 
   get isGroupsView() {
@@ -87,8 +115,19 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     if (!["groups", "shared_ips", "pairs"].includes(view)) {
       return;
     }
+
+    const changed = this.activeView !== view;
+    const wasFocused = Boolean(this.focusedPairId);
+    if (wasFocused && view !== "pairs") {
+      this.clearFocusedPair();
+    }
+
     this.activeView = view;
     this.viewInitialized = true;
+
+    if (changed || (wasFocused && view !== "pairs")) {
+      this.loadCorrelations();
+    }
   }
 
   @action
@@ -323,6 +362,28 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         fromStatusLabel && toStatusLabel && fromStatusLabel !== toStatusLabel
           ? `${fromStatusLabel} → ${toStatusLabel}`
           : toStatusLabel,
+    };
+  }
+
+  decorateCompactItem(item) {
+    if (!item) {
+      return null;
+    }
+    return {
+      ...item,
+      user_a: this.decorateUser(item.user_a),
+      user_b: this.decorateUser(item.user_b),
+      confidence_label: i18n(
+        `admin.account_security.correlations.confidences.${item.confidence}`
+      ),
+      status_label: i18n(
+        `admin.account_security.correlations.statuses.${item.status}`
+      ),
+      context_only_label: item.context_only
+        ? i18n(
+            `admin.account_security.correlations.context_only_reasons.${item.context_only_reason || "non_scoring_context"}`
+          )
+        : null,
     };
   }
 
@@ -563,127 +624,55 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     };
   }
 
-  addGroupAccount(group, user, sources) {
-    if (!user?.id) {
-      return;
-    }
+  decorateSharedIpGroup(group) {
+    const networkContext = this.decorateNetworkContext(group.network_context);
+    const contexts = [];
+    if (!group.public) { contexts.push(i18n("admin.account_security.correlations.context_nonpublic")); }
+    if (group.trusted) { contexts.push(i18n("admin.account_security.correlations.context_trusted")); }
+    if (group.tor) { contexts.push(i18n("admin.account_security.correlations.context_tor")); }
+    if (group.hosting) { contexts.push(i18n("admin.account_security.correlations.context_hosting")); }
+    if (group.mobile) { contexts.push(i18n("admin.account_security.correlations.context_mobile")); }
+    if (group.local_blacklist) { contexts.push(i18n("admin.account_security.correlations.context_blacklist")); }
+    if (group.usage_type) { contexts.push(group.usage_type); }
 
-    let account = group.accounts.get(user.id);
-    if (!account) {
-      account = {
-        id: user.id,
-        username: user.username,
-        profile_url: user.profile_url,
-        sources: new Set(),
-      };
-      group.accounts.set(user.id, account);
-    }
-    (sources || []).forEach((source) => account.sources.add(source));
-  }
+    const accounts = (group.accounts || [])
+      .map((account) => ({
+        ...this.decorateUser(account),
+        sources_display: (account.sources || [])
+          .map((source) => this.sourceLabel(source))
+          .join(", "),
+      }))
+      .sort((a, b) => (a.username || "").localeCompare(b.username || ""));
+    const pairs = (group.pairs || [])
+      .map((item) => this.decorateCompactItem(item))
+      .filter(Boolean);
+    const totalAccounts = Number(group.total_accounts || accounts.length || 0);
 
-  buildSharedIpGroups(items) {
-    const groups = new Map();
-
-    (items || []).forEach((item) => {
-      (item.shared_ip_details || []).forEach((detail) => {
-        const totalAccounts = Number(detail.user_count || 0);
-        if (!detail.ip_address || totalAccounts < 3) {
-          return;
-        }
-
-        let group = groups.get(detail.ip_address);
-        if (!group) {
-          group = {
-            ip_address: detail.ip_address,
-            total_accounts: totalAccounts,
-            accounts: new Map(),
-            pair_ids: new Set(),
-            max_score: 0,
-            context_display: detail.context_display,
-            network_context: detail.network_context,
-            public: detail.public === true,
-            trusted: detail.trusted === true,
-            tor: detail.tor === true,
-            hosting: detail.hosting === true,
-            mobile: detail.mobile === true,
-            local_blacklist: detail.local_blacklist === true,
-            usage_type: detail.usage_type || null,
-            isp: detail.isp || null,
-          };
-          groups.set(detail.ip_address, group);
-        }
-
-        group.total_accounts = Math.max(group.total_accounts, totalAccounts);
-        group.max_score = Math.max(group.max_score, Number(item.score || 0));
-        group.pair_ids.add(item.id);
-        this.addGroupAccount(group, item.user_a, detail.sources_a);
-        this.addGroupAccount(group, item.user_b, detail.sources_b);
-      });
-    });
-
-    return [...groups.values()]
-      .map((group) => {
-        const accounts = [...group.accounts.values()]
-          .map((account) => ({
-            ...account,
-            sources_display: [...account.sources]
-              .map((source) => this.sourceLabel(source))
-              .join(", "),
-          }))
-          .sort((a, b) => a.username.localeCompare(b.username));
-        const registrationAccounts = accounts.filter((account) =>
-          account.sources.has("registration")
-        ).length;
-        const authAccounts = accounts.filter(
-          (account) =>
-            account.sources.has("auth_session") ||
-            account.sources.has("active_session") ||
-            account.sources.has("session_observation")
-        ).length;
-        const visibleCount = accounts.length;
-        const pairs = items.filter((item) => group.pair_ids.has(item.id));
-        const temporalAlignedPairs = pairs.filter((item) =>
-          (item.temporal_ip_details || []).some(
-            (detail) =>
-              detail.ip_address === group.ip_address &&
-              Number(detail.closest_gap_seconds) <= 86400
-          )
-        ).length;
-
-        return {
-          ...group,
-          accounts,
-          pairs,
-          visible_account_count: visibleCount,
-          pair_count: pairs.length,
-          registration_account_count: registrationAccounts,
-          auth_account_count: authAccounts,
-          temporal_aligned_pair_count: temporalAlignedPairs,
-          account_count_label: i18n(
-            "admin.account_security.correlations.group_account_count",
-            { count: group.total_accounts }
-          ),
-          coverage_label:
-            visibleCount >= group.total_accounts
-              ? i18n("admin.account_security.correlations.group_all_accounts", {
-                  count: group.total_accounts,
-                })
-              : i18n("admin.account_security.correlations.group_partial_accounts", {
-                  visible: visibleCount,
-                  total: group.total_accounts,
-                }),
-          pair_count_label: i18n(
-            "admin.account_security.correlations.group_pair_count",
-            { count: pairs.length }
-          ),
-        };
-      })
-      .sort(
-        (a, b) =>
-          b.total_accounts - a.total_accounts ||
-          b.max_score - a.max_score ||
-          a.ip_address.localeCompare(b.ip_address)
-      );
+    return {
+      ...group,
+      accounts,
+      pairs,
+      network_context: networkContext,
+      context_display:
+        contexts.join(" · ") ||
+        i18n("admin.account_security.correlations.context_standard"),
+      account_count_label: i18n(
+        "admin.account_security.correlations.group_account_count",
+        { count: totalAccounts }
+      ),
+      coverage_label: group.accounts_truncated
+        ? i18n("admin.account_security.correlations.group_partial_accounts", {
+            visible: accounts.length,
+            total: totalAccounts,
+          })
+        : i18n("admin.account_security.correlations.group_all_accounts", {
+            count: totalAccounts,
+          }),
+      pair_count_label: i18n(
+        "admin.account_security.correlations.group_pair_count",
+        { count: Number(group.pair_count || 0) }
+      ),
+    };
   }
 
   decorateGroupAnchor(anchor) {
@@ -723,13 +712,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ...this.decorateUser(user),
       direct_relation_count: Number(user.direct_relation_count || 0),
     }));
-    const visiblePairs = (items || []).filter(
-      (item) => item.account_group_key === group.key
-    );
+    const visiblePairs = (group.pairs || [])
+      .map((item) => this.decorateCompactItem(item))
+      .filter(Boolean);
     const statusCounts = group.status_counts || {};
     const evidenceCounts = group.evidence_counts || {};
-    const allPairsVisible =
-      visiblePairs.length >= Number(group.pair_record_count || group.relation_count || 0);
+    const allPairsVisible = group.pairs_truncated !== true;
     const contextOnlyGroup =
       allPairsVisible &&
       visiblePairs.length > 0 &&
@@ -873,11 +861,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     const accountGroups = (data.account_groups || []).map((group) =>
       this.decorateAccountGroup(group, items)
     );
-    const sharedIpGroups = this.buildSharedIpGroups(items);
-    const accountGroupedPairIds = new Set(
-      accountGroups.flatMap((group) => group.visible_pairs.map((item) => item.id))
+    const sharedIpGroups = (data.shared_ip_groups || []).map((group) =>
+      this.decorateSharedIpGroup(group)
     );
-
     return {
       ...data,
       scan: this.decorateScan(data.scan),
@@ -885,9 +871,6 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       items,
       account_groups: accountGroups,
       shared_ip_groups: sharedIpGroups,
-      ungrouped_items: items.filter(
-        (item) => !accountGroupedPairIds.has(item.id)
-      ),
     };
   }
 
@@ -1102,18 +1085,98 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       this.isLoading = true;
     }
 
+    const filters = {
+      status: this.status,
+      confidence: this.confidence,
+      search: this.search,
+    };
+
     try {
-      const data = await ajax("/admin/plugins/account-security/correlations.json", {
+      const pairRequest = ajax("/admin/plugins/account-security/correlations.json", {
         data: {
-          status: this.status,
-          confidence: this.confidence,
-          search: this.search,
+          ...filters,
           page: this.page,
+          pair_id: this.focusedPairId || undefined,
+          include_group_context: false,
         },
       });
+
+      let data;
+      if (this.focusedPairId) {
+        data = await pairRequest;
+        data = {
+          ...data,
+          account_groups: [],
+          shared_ip_groups: [],
+          account_groups_page: this.groupPage,
+          account_groups_per_page: 20,
+          account_groups_total: 0,
+          shared_ip_page: this.sharedIpPage,
+          shared_ip_per_page: 20,
+          shared_ip_total: 0,
+        };
+      } else if (this.activeView === "groups") {
+        const [pairData, groupData] = await Promise.all([
+          pairRequest,
+          ajax("/admin/plugins/account-security/correlations/groups.json", {
+            data: { ...filters, page: this.groupPage },
+          }),
+        ]);
+        data = {
+          ...pairData,
+          account_groups: groupData.account_groups || [],
+          account_groups_truncated: groupData.account_groups_truncated === true,
+          account_groups_page: groupData.page || 1,
+          account_groups_per_page: groupData.per_page || 20,
+          account_groups_total: groupData.total || 0,
+          shared_ip_groups: [],
+          shared_ip_page: this.sharedIpPage,
+          shared_ip_per_page: 20,
+          shared_ip_total: 0,
+        };
+      } else if (this.activeView === "shared_ips") {
+        const [pairData, sharedIpData] = await Promise.all([
+          pairRequest,
+          ajax("/admin/plugins/account-security/correlations/shared-ips.json", {
+            data: { ...filters, page: this.sharedIpPage },
+          }),
+        ]);
+        data = {
+          ...pairData,
+          account_groups: [],
+          account_groups_page: this.groupPage,
+          account_groups_per_page: 20,
+          account_groups_total: 0,
+          shared_ip_groups: sharedIpData.shared_ip_groups || [],
+          shared_ip_page: sharedIpData.page || 1,
+          shared_ip_per_page: sharedIpData.per_page || 20,
+          shared_ip_total: sharedIpData.total || 0,
+          shared_ip_source_complete: sharedIpData.source_complete !== false,
+          shared_ip_filter_truncated: sharedIpData.filter_truncated === true,
+          shared_ip_pair_preview_truncated:
+            sharedIpData.pair_preview_truncated === true,
+        };
+      } else {
+        const pairData = await pairRequest;
+        data = {
+          ...pairData,
+          account_groups: [],
+          shared_ip_groups: [],
+          account_groups_page: this.groupPage,
+          account_groups_per_page: 20,
+          account_groups_total: 0,
+          shared_ip_page: this.sharedIpPage,
+          shared_ip_per_page: 20,
+          shared_ip_total: 0,
+        };
+      }
+
       this.data = this.decorateData(data);
       this.initializeView(this.data);
       this.syncScanPolling();
+      if (this.focusedPairId) {
+        this.openFocusedPairAfterRender(this.focusedPairId);
+      }
       return true;
     } catch (error) {
       popupAjaxError(error);
@@ -1123,6 +1186,15 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         this.isLoading = false;
       }
     }
+  }
+
+  openFocusedPairAfterRender(pairId) {
+    schedule("afterRender", () => {
+      const element = document.getElementById(`correlation-${pairId}`);
+      if (!element) { return; }
+      element.open = true;
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   @action
@@ -1201,6 +1273,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @action
   applyFilters() {
     this.page = 1;
+    this.groupPage = 1;
+    this.sharedIpPage = 1;
+    this.clearFocusedPair();
     this.loadCorrelations();
   }
 
@@ -1208,32 +1283,57 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     return this.isScanning || this.scanStateBusy();
   }
 
+  get currentPage() {
+    if (this.isGroupsView) { return this.data?.account_groups_page || 1; }
+    if (this.isSharedIpsView) { return this.data?.shared_ip_page || 1; }
+    return this.data?.page || 1;
+  }
+
+  get currentPerPage() {
+    if (this.isGroupsView) { return this.data?.account_groups_per_page || 20; }
+    if (this.isSharedIpsView) { return this.data?.shared_ip_per_page || 20; }
+    return this.data?.per_page || 50;
+  }
+
+  get currentTotal() {
+    if (this.isGroupsView) { return this.data?.account_groups_total || 0; }
+    if (this.isSharedIpsView) { return this.data?.shared_ip_total || 0; }
+    return this.data?.total || 0;
+  }
+
   get hasPreviousPage() {
-    return (this.data?.page || 1) > 1;
+    return this.currentPage > 1;
   }
 
   get hasNextPage() {
-    if (!this.data) {
-      return false;
-    }
-    return this.data.page * this.data.per_page < this.data.total;
+    return this.currentPage * this.currentPerPage < this.currentTotal;
   }
 
   @action
   previousPage() {
-    if (!this.hasPreviousPage) {
-      return;
+    if (!this.hasPreviousPage) { return; }
+    this.clearFocusedPair();
+    if (this.isGroupsView) {
+      this.groupPage = Math.max(1, this.groupPage - 1);
+    } else if (this.isSharedIpsView) {
+      this.sharedIpPage = Math.max(1, this.sharedIpPage - 1);
+    } else {
+      this.page = Math.max(1, this.page - 1);
     }
-    this.page = Math.max(1, this.page - 1);
     this.loadCorrelations();
   }
 
   @action
   nextPage() {
-    if (!this.hasNextPage) {
-      return;
+    if (!this.hasNextPage) { return; }
+    this.clearFocusedPair();
+    if (this.isGroupsView) {
+      this.groupPage += 1;
+    } else if (this.isSharedIpsView) {
+      this.sharedIpPage += 1;
+    } else {
+      this.page += 1;
     }
-    this.page += 1;
     this.loadCorrelations();
   }
 
@@ -1281,19 +1381,19 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   }
 
   @action
-  focusPair(pairId) {
+  async focusPair(pairId) {
+    const id = Number(pairId);
+    if (!Number.isInteger(id) || id <= 0) { return; }
     this.activeView = "pairs";
     this.viewInitialized = true;
 
-    schedule("afterRender", () => {
-      const element = document.getElementById(`correlation-${pairId}`);
-      if (!element) {
-        return;
-      }
+    if ((this.data?.items || []).some((item) => Number(item.id) === id)) {
+      this.openFocusedPairAfterRender(id);
+      return;
+    }
 
-      element.open = true;
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    this.focusedPairId = id;
+    await this.fetchCorrelations({ quiet: true });
   }
 
   @action

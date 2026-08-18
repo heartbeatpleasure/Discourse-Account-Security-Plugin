@@ -12,7 +12,8 @@ module ::AccountSecurity
       tor = FeedSnapshot.find_by(source: "tor")
       blacklist = FeedSnapshot.find_by(source: "abuseipdb_blacklist")
       circuit = CircuitBreaker.state
-      status, reason = overall_state(usage, tor, blacklist, circuit)
+      correlation = correlation_health
+      status, reason = overall_state(usage, tor, blacklist, circuit, correlation)
       {
         generated_at: Time.zone.now.iso8601,
         overall: status,
@@ -40,6 +41,7 @@ module ::AccountSecurity
           abuseipdb_blacklist: serialize_feed(blacklist, 8.hours),
         },
         local_network_context: NetworkContext.database_status,
+        correlation: correlation,
         counts: {
           cached_addresses: safe_count(IpIntelligence),
           open_events: safe_count(RiskEvent.where(status: "open")),
@@ -113,13 +115,17 @@ module ::AccountSecurity
       )
     end
 
-    def overall_status(usage, tor, blacklist, circuit)
-      overall_state(usage, tor, blacklist, circuit).first
+    def overall_status(usage, tor, blacklist, circuit, correlation = correlation_health)
+      overall_state(usage, tor, blacklist, circuit, correlation).first
     end
 
-    def overall_state(usage, tor, blacklist, circuit)
+    def overall_state(usage, tor, blacklist, circuit, correlation = correlation_health)
       return ["disabled", "plugin_disabled"] unless SiteSetting.account_security_enabled
-      return ["local_only", "ip_reputation_disabled"] unless SiteSetting.account_security_ip_reputation_enabled
+      correlation_reason = correlation[:reason].to_s.presence if correlation.is_a?(Hash)
+      unless SiteSetting.account_security_ip_reputation_enabled
+        return ["degraded", correlation_reason] if correlation_reason
+        return ["local_only", "ip_reputation_disabled"]
+      end
       return ["misconfigured", "api_key_missing"] if SiteSetting.account_security_abuseipdb_api_key.blank?
       return ["circuit_open", "circuit_open"] if circuit[:state] == "open"
       return ["invalid_credentials", "invalid_credentials"] if usage&.last_status.to_i.in?([401, 403])
@@ -136,8 +142,52 @@ module ::AccountSecurity
       if SiteSetting.account_security_staff_notifications_enabled && IncidentNotifier.notification_group_names.empty?
         return ["degraded", "notification_groups_missing"]
       end
+      return ["degraded", correlation_reason] if correlation_reason
 
       ["healthy", nil]
+    end
+
+    def correlation_health
+      unless SiteSetting.account_security_enabled && SiteSetting.account_security_account_correlation_enabled
+        return { enabled: false, state: "disabled", reason: nil }
+      end
+
+      scan = AccountCorrelationScanner.status
+      scan_history = AccountCorrelationScanner.health_history
+      schedule = AccountCorrelationScheduler.health_status
+      scan_state = scan[:state].to_s
+      scan_reason =
+        if scan_state == "failed"
+          scan[:error_code].to_s == "scan_stale" ? "correlation_scan_stale" : "correlation_scan_failed"
+        end
+      reason = scan_reason || schedule[:reason].to_s.presence
+
+      {
+        enabled: true,
+        state: reason ? "degraded" : (scan_state.in?(%w[queued running]) ? "busy" : "healthy"),
+        reason: reason,
+        scan: {
+          state: scan_state.presence || "never",
+          source: scan[:source],
+          queued_at: scan[:queued_at],
+          started_at: scan[:started_at],
+          heartbeat_at: scan[:heartbeat_at],
+          completed_at: scan[:completed_at],
+          error_code: scan[:error_code],
+          pairs_processed: scan[:pairs_processed].to_i,
+          pairs_failed: scan[:pairs_failed].to_i,
+          stale_recovered: scan[:stale_recovered] == true,
+          last_success_at: scan_history[:last_success_at],
+          last_failure_at: scan_history[:last_failure_at],
+        }.compact,
+        schedule: schedule.slice(
+          :enabled, :state, :reason, :frequency, :next_run_at, :last_scheduled_at,
+          :expected_slot_at, :overdue
+        ),
+      }
+    rescue StandardError => e
+      Rails.logger.warn("[account_security] correlation health failed class=#{e.class}")
+      { enabled: true, state: "degraded", reason: "correlation_health_failed" }
     end
 
     def serialize_usage(row)

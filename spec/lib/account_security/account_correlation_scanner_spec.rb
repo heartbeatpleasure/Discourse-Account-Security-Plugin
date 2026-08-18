@@ -8,10 +8,14 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     SiteSetting.account_security_account_correlation_enabled = true
     SiteSetting.account_security_browser_continuity_enabled = true
     Discourse.redis.del(described_class::STATUS_KEY)
+    Discourse.redis.del(described_class::LAST_SUCCESS_KEY)
+    Discourse.redis.del(described_class::LAST_FAILURE_KEY)
   end
 
   after do
     Discourse.redis.del(described_class::STATUS_KEY)
+    Discourse.redis.del(described_class::LAST_SUCCESS_KEY)
+    Discourse.redis.del(described_class::LAST_FAILURE_KEY)
   end
 
   it "builds each exact registration-IP pair only once" do
@@ -148,6 +152,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     expect(scan[:new_candidates]).to eq(1)
     expect(scan[:existing_candidates_updated]).to eq(1)
     expect(scan.dig(:diagnostics, :existing_pairs_total)).to eq(1)
+    expect(described_class.health_history[:last_success_at]).to be_present
   end
 
   it "recovers a stale running status instead of blocking scans for the status TTL" do
@@ -169,6 +174,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     expect(scan[:error_code]).to eq("scan_stale")
     expect(scan[:stale_recovered]).to eq(true)
     expect(scan[:completed_at]).to be_present
+    expect(described_class.health_history[:last_failure_at]).to be_present
   end
 
 end

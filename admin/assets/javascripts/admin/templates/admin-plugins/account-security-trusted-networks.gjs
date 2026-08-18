@@ -190,6 +190,13 @@ export default RouteTemplate(
 
       <section class="as-page__panel">
         <div class="as-page__section-title"><h2>{{i18n "admin.account_security.trusted.current"}}</h2></div>
+        <div class="as-page__toolbar" style="margin-bottom: .8rem;">
+          <div class="as-page__field">
+            <label>{{i18n "admin.account_security.trusted.search"}}</label>
+            <input type="search" value={{@controller.search}} placeholder={{i18n "admin.account_security.trusted.search_placeholder"}} {{on "input" @controller.setSearch}} />
+          </div>
+          <button class="btn" type="button" {{on "click" @controller.applySearch}}>{{i18n "admin.account_security.trusted.search_action"}}</button>
+        </div>
         {{#if @controller.data.items.length}}
           <div class="as-page__table-wrap">
             <table class="as-page__table">
@@ -200,6 +207,11 @@ export default RouteTemplate(
         {{else}}
           <p class="as-page__muted">{{i18n "admin.account_security.no_data"}}</p>
         {{/if}}
+        <div class="as-page__buttons" style="justify-content: space-between; margin-top: .8rem;">
+          <button class="btn" type="button" disabled={{unless @controller.hasPreviousPage true false}} {{on "click" @controller.previousPage}}>{{i18n "admin.account_security.trusted.previous"}}</button>
+          <span class="as-page__muted">{{i18n "admin.account_security.trusted.page" page=@controller.data.page total=@controller.data.total}}</span>
+          <button class="btn" type="button" disabled={{unless @controller.hasNextPage true false}} {{on "click" @controller.nextPage}}>{{i18n "admin.account_security.trusted.next"}}</button>
+        </div>
       </section>
     </div>
   </template>
