@@ -201,6 +201,10 @@ module ::AccountSecurity
         "COALESCE((evidence ->> 'scoring_version')::integer, 0) < ?",
         AccountCorrelationPolicy::SCORING_VERSION,
       ).exists?
+      temporal_refresh_required = AccountCorrelation.where(
+        "COALESCE((evidence ->> 'temporal_evidence_version')::integer, 0) < ?",
+        TemporalCorrelationEvidence::EVIDENCE_VERSION,
+      ).exists?
       max_page = [(total.to_f / per_page).ceil, 1].max
       page = [page, max_page].min
       items = scope.offset((page - 1) * per_page).limit(per_page)
@@ -213,6 +217,7 @@ module ::AccountSecurity
         open_count: AccountCorrelation.where(status: "open").count,
         strong_open_count: AccountCorrelation.where(status: %w[open monitor], confidence: %w[strong very_strong]).count,
         scoring_refresh_required: scoring_refresh_required,
+        temporal_refresh_required: temporal_refresh_required,
         scan: AccountCorrelationScanner.status,
         schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
         items: items.map { |item| serialize_correlation(item) },
@@ -545,6 +550,18 @@ module ::AccountSecurity
           max_shared_exact_ip_users: evidence["max_shared_exact_ip_users"].to_i,
           large_shared_network: evidence["large_shared_network"] == true,
           score_breakdown: serialize_score_breakdown(evidence["score_breakdown"]),
+          temporal_evidence_version: evidence["temporal_evidence_version"].to_i,
+          timed_shared_ip_count: evidence["timed_shared_ip_count"].to_i,
+          temporal_within_15m_count: evidence["temporal_within_15m_count"].to_i,
+          temporal_within_1h_count: evidence["temporal_within_1h_count"].to_i,
+          temporal_within_24h_count: evidence["temporal_within_24h_count"].to_i,
+          temporal_within_7d_count: evidence["temporal_within_7d_count"].to_i,
+          temporal_public_within_24h_count: evidence["temporal_public_within_24h_count"].to_i,
+          temporal_repeated_public_alignment: evidence["temporal_repeated_public_alignment"] == true,
+          closest_shared_ip_gap_seconds: nonnegative_integer_or_nil(evidence["closest_shared_ip_gap_seconds"]),
+          temporal_ip_details: serialize_temporal_ip_details(evidence["temporal_ip_details"]),
+          temporal_ip_details_truncated: evidence["temporal_ip_details_truncated"] == true,
+          temporal_score_effect: evidence["temporal_score_effect"] == "none" ? "none" : nil,
           raw_user_agent_stored: false,
         },
       }
@@ -592,6 +609,27 @@ module ::AccountSecurity
         next unless key.match?(/\A[a-z0-9_]{1,40}\z/)
         { key: key, points: raw["points"].to_i, count: raw["count"].to_i }
       end
+    end
+
+    def serialize_temporal_ip_details(value)
+      Array(value).first(TemporalCorrelationEvidence::MAX_DETAILS).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        ip = IpNormalizer.normalize(raw["ip_address"])
+        next if ip.blank?
+
+        {
+          ip_address: ip,
+          public: raw["public"] == true,
+          closest_gap_seconds: nonnegative_integer_or_nil(raw["closest_gap_seconds"]),
+          observations_a: raw["observations_a"].to_i.clamp(0, 1_000_000),
+          observations_b: raw["observations_b"].to_i.clamp(0, 1_000_000),
+        }
+      end
+    end
+
+    def nonnegative_integer_or_nil(value)
+      number = Integer(value, exception: false)
+      number && number >= 0 ? number : nil
     end
 
     def serialize_trusted_network(item)

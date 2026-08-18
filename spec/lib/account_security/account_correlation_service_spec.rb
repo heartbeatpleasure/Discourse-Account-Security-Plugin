@@ -87,4 +87,21 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation.evidence["shared_network_count"]).to eq(2)
     expect(correlation.evidence["shared_session_signature_count"]).to eq(2)
   end
+  it "stores aggregate temporal evidence without copying source timestamps into correlation evidence" do
+    base = 1.day.ago.change(usec: 0)
+    user_a.update_columns(registration_ip_address: "8.8.4.4", created_at: base)
+    user_b.update_columns(registration_ip_address: "8.8.4.4", created_at: base + 20.minutes)
+
+    correlation = described_class.recalculate_pair!(user_a.id, user_b.id, source: "spec")
+
+    expect(correlation).to be_present
+    expect(correlation.evidence["temporal_evidence_version"]).to eq(
+      AccountSecurity::TemporalCorrelationEvidence::EVIDENCE_VERSION,
+    )
+    expect(correlation.evidence["closest_shared_ip_gap_seconds"]).to eq(20.minutes.to_i)
+    serialized = correlation.evidence.to_json
+    expect(serialized).not_to include("closest_a_at")
+    expect(serialized).not_to include("closest_b_at")
+  end
+
 end

@@ -8,7 +8,6 @@ export default class AccountSecurityCorrelationPair extends Component {
   <template>
     <details class="as-correlation__candidate">
       <summary class="as-correlation__candidate-summary-line">
-        <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
         <div class="as-correlation__summary-main">
           <div class="as-correlation__summary-title">
             {{#if @item.user_a}}
@@ -37,6 +36,7 @@ export default class AccountSecurityCorrelationPair extends Component {
           <span class="as-correlation__badge">{{@item.confidence_label}}</span>
           <span class="as-correlation__badge">{{@item.status_label}}</span>
         </div>
+        <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
       </summary>
 
       <div class="as-correlation__candidate-body">
@@ -103,6 +103,54 @@ export default class AccountSecurityCorrelationPair extends Component {
               </div>
             {{/each}}
           </div>
+        {{/if}}
+
+        {{#if @item.has_temporal_evidence}}
+          <div class="as-correlation__evidence-title">
+            <h4>{{i18n "admin.account_security.correlations.temporal_title"}}</h4>
+            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.temporal_description"}}</p>
+          </div>
+          <div class="as-correlation__temporal-summary">
+            <div class="as-correlation__compact-item">
+              <div class="as-correlation__label">{{i18n "admin.account_security.correlations.temporal_closest_gap"}}</div>
+              <div class="as-correlation__value">{{@item.temporal_closest_gap_display}}</div>
+            </div>
+            <div class="as-correlation__compact-item">
+              <div class="as-correlation__label">{{i18n "admin.account_security.correlations.temporal_within_1h"}}</div>
+              <div class="as-correlation__value">{{@item.evidence.temporal_within_1h_count}}</div>
+            </div>
+            <div class="as-correlation__compact-item">
+              <div class="as-correlation__label">{{i18n "admin.account_security.correlations.temporal_within_24h"}}</div>
+              <div class="as-correlation__value">{{@item.evidence.temporal_within_24h_count}}</div>
+            </div>
+            <div class="as-correlation__compact-item">
+              <div class="as-correlation__label">{{i18n "admin.account_security.correlations.temporal_public_within_24h"}}</div>
+              <div class="as-correlation__value">{{@item.evidence.temporal_public_within_24h_count}}</div>
+            </div>
+          </div>
+          <div class="as-correlation__temporal-list">
+            {{#each @item.temporal_ip_details as |detail|}}
+              <div class="as-correlation__temporal-card">
+                <div class="as-correlation__temporal-card-header">
+                  <span class="as-correlation__ip-address">{{detail.ip_address}}</span>
+                  <span class="as-correlation__badge">{{detail.closest_gap_display}}</span>
+                </div>
+                <div class="as-correlation__temporal-account-grid">
+                  <div>
+                    <div class="as-correlation__label">{{detail.account_a_label}}</div>
+                    <div class="as-correlation__value">{{i18n "admin.account_security.correlations.temporal_observations" count=detail.observations_a}}</div>
+                  </div>
+                  <div>
+                    <div class="as-correlation__label">{{detail.account_b_label}}</div>
+                    <div class="as-correlation__value">{{i18n "admin.account_security.correlations.temporal_observations" count=detail.observations_b}}</div>
+                  </div>
+                </div>
+              </div>
+            {{/each}}
+          </div>
+          {{#if @item.evidence.temporal_ip_details_truncated}}
+            <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.temporal_details_truncated"}}</div>
+          {{/if}}
         {{/if}}
 
         {{#if @item.score_breakdown.length}}

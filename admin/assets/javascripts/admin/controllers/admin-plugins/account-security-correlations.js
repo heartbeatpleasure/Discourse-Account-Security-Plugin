@@ -99,6 +99,42 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     };
   }
 
+
+  temporalGapLabel(seconds) {
+    if (seconds === null || seconds === undefined || seconds === "") {
+      return "—";
+    }
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value < 0) {
+      return "—";
+    }
+    if (value < 60) {
+      return i18n("admin.account_security.correlations.temporal_gap_less_than_minute");
+    }
+    if (value < 3600) {
+      return i18n("admin.account_security.correlations.temporal_gap_minutes", {
+        count: Math.max(1, Math.round(value / 60)),
+      });
+    }
+    if (value < 86400) {
+      return i18n("admin.account_security.correlations.temporal_gap_hours", {
+        count: Math.max(1, Math.round(value / 3600)),
+      });
+    }
+    return i18n("admin.account_security.correlations.temporal_gap_days", {
+      count: Math.max(1, Math.round(value / 86400)),
+    });
+  }
+
+  decorateTemporalDetail(detail, userA, userB) {
+    return {
+      ...detail,
+      closest_gap_display: this.temporalGapLabel(detail.closest_gap_seconds),
+      account_a_label: userA?.username || "—",
+      account_b_label: userB?.username || "—",
+    };
+  }
+
   decorateBreakdown(entry) {
     const label = i18n(
       `admin.account_security.correlations.score_reasons.${entry.key}`
@@ -183,6 +219,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       score_breakdown: (evidence.score_breakdown || []).map((entry) =>
         this.decorateBreakdown(entry)
       ),
+      temporal_ip_details: (evidence.temporal_ip_details || []).map((detail) =>
+        this.decorateTemporalDetail(detail, userA, userB)
+      ),
+      temporal_closest_gap_display: this.temporalGapLabel(
+        evidence.closest_shared_ip_gap_seconds
+      ),
+      has_temporal_evidence: Number(evidence.timed_shared_ip_count || 0) > 0,
       can_reopen: item.status !== "open",
     };
   }
@@ -207,6 +250,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ["diagnostics_signature_pairs", diagnostics.signature_pairs_added],
       ["diagnostics_large_groups", diagnostics.large_ip_groups_skipped],
       ["diagnostics_existing_pairs", diagnostics.existing_pairs_added],
+      ["diagnostics_temporal_observations", diagnostics.temporal_observation_rows],
       ["diagnostics_total_pairs", diagnostics.total_candidate_pairs],
     ].map(([key, value]) => ({
       label: i18n(`admin.account_security.correlations.${key}`),
@@ -226,7 +270,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       started_at_display: formatAccountSecurityDateTime(scan.started_at),
       completed_at_display: formatAccountSecurityDateTime(scan.completed_at),
       diagnostic_cards: diagnosticCards,
-      auth_log_truncated: diagnostics.auth_log_truncated === true,
+      auth_log_truncated:
+        diagnostics.auth_log_truncated === true ||
+        diagnostics.temporal_auth_log_truncated === true,
     };
   }
 
@@ -315,6 +361,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         ).length;
         const visibleCount = accounts.length;
         const pairs = items.filter((item) => group.pair_ids.has(item.id));
+        const temporalAlignedPairs = pairs.filter((item) =>
+          (item.temporal_ip_details || []).some(
+            (detail) =>
+              detail.ip_address === group.ip_address &&
+              Number(detail.closest_gap_seconds) <= 86400
+          )
+        ).length;
 
         return {
           ...group,
@@ -324,6 +377,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
           pair_count: pairs.length,
           registration_account_count: registrationAccounts,
           auth_account_count: authAccounts,
+          temporal_aligned_pair_count: temporalAlignedPairs,
           account_count_label: i18n(
             "admin.account_security.correlations.group_account_count",
             { count: group.total_accounts }

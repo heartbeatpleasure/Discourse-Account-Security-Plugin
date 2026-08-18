@@ -208,4 +208,30 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
     expect(described_class.confidence(74)).to eq("strong")
     expect(described_class.confidence(75)).to eq("very_strong")
   end
+  it "keeps temporal evidence out of the score until the scoring model is explicitly revisited" do
+    base = {
+      "shared_exact_ip_count" => 1,
+      "shared_ip_details" => [
+        {
+          "public" => true,
+          "user_count" => 2,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+        },
+      ],
+    }
+
+    with_temporal = base.merge(
+      "temporal_evidence_version" => 1,
+      "timed_shared_ip_count" => 1,
+      "temporal_within_15m_count" => 1,
+      "temporal_within_1h_count" => 1,
+      "temporal_within_24h_count" => 1,
+      "temporal_public_within_24h_count" => 1,
+      "closest_shared_ip_gap_seconds" => 30,
+    )
+
+    expect(described_class.score(with_temporal)).to eq(described_class.score(base))
+  end
+
 end

@@ -124,11 +124,17 @@ module ::AccountSecurity
           max_users: precomputed_supplemental["max_browser_continuity_users"].to_i,
         }
         max_network_users = precomputed_supplemental["max_shared_network_users"].to_i
+        temporal = normalize_temporal_evidence(precomputed_supplemental["temporal_evidence"])
       else
         shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
         shared_signature_count = shared_session_signatures(user_a.id, user_b.id, shared_networks).length
         browser = BrowserContinuityRecorder.shared_summary(user_a.id, user_b.id)
         max_network_users = shared_networks.map { |network| distinct_users_on_network(network) }.max.to_i
+        temporal = TemporalCorrelationEvidence.for_pair(
+          user_a.id,
+          user_b.id,
+          shared_ips: exact_details.map { |detail| detail["ip_address"] },
+        )
       end
 
       registration_details = exact_details.select { |detail| both_source?(detail, "registration") }
@@ -176,7 +182,26 @@ module ::AccountSecurity
         "max_shared_exact_ip_users" => exact_counts.max.to_i,
         "large_shared_network" => [max_network_users, exact_counts.max.to_i].max >= 10,
         "raw_user_agent_stored" => false,
-      }
+      }.merge(temporal)
+    end
+
+    def normalize_temporal_evidence(value)
+      return TemporalCorrelationEvidence.empty_evidence unless value.is_a?(Hash)
+
+      TemporalCorrelationEvidence.empty_evidence.merge(value.slice(
+        "temporal_evidence_version",
+        "timed_shared_ip_count",
+        "temporal_within_15m_count",
+        "temporal_within_1h_count",
+        "temporal_within_24h_count",
+        "temporal_within_7d_count",
+        "temporal_public_within_24h_count",
+        "temporal_repeated_public_alignment",
+        "closest_shared_ip_gap_seconds",
+        "temporal_ip_details",
+        "temporal_ip_details_truncated",
+        "temporal_score_effect",
+      ))
     end
 
     def shared_network_keys(user_a_id, user_b_id)

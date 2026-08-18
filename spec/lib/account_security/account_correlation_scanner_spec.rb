@@ -20,7 +20,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
       user.update_columns(registration_ip_address: "8.8.8.8", ip_address: "8.8.8.8")
     end
 
-    pairs, truncated, _index, _context, diagnostics = described_class.candidate_pairs
+    pairs, truncated, _index, _context, _temporal_index, diagnostics = described_class.candidate_pairs
 
     expect(truncated).to eq(false)
     expect(pairs.sort).to eq(users.map(&:id).sort.combination(2).to_a.sort)
@@ -31,7 +31,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     users = Array.new(5) { Fabricate(:user) }
     users.each { |user| user.update_columns(registration_ip_address: "10.0.0.25") }
 
-    pairs, _truncated, _index, _context, diagnostics = described_class.candidate_pairs
+    pairs, _truncated, _index, _context, _temporal_index, diagnostics = described_class.candidate_pairs
 
     expect(pairs.sort).to eq(users.map(&:id).sort.combination(2).to_a.sort)
     expect(diagnostics[:nonpublic_ip_groups]).to be >= 1
@@ -43,7 +43,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     UserIpAddressHistory.create!(user_id: user_a.id, ip_address: "1.1.1.1")
     UserIpAddressHistory.create!(user_id: user_b.id, ip_address: "1.1.1.1")
 
-    pairs, _truncated, _index, _context, diagnostics = described_class.candidate_pairs
+    pairs, _truncated, _index, _context, _temporal_index, diagnostics = described_class.candidate_pairs
 
     expect(pairs).to include([user_a.id, user_b.id].sort)
     expect(diagnostics[:history_rows]).to be >= 2
@@ -53,7 +53,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     users = Array.new(described_class::MAX_GROUP_USERS + 1) { Fabricate(:user) }
     users.each { |user| user.update_columns(registration_ip_address: "8.8.4.4") }
 
-    pairs, _truncated, _index, _context, diagnostics = described_class.candidate_pairs
+    pairs, _truncated, _index, _context, _temporal_index, diagnostics = described_class.candidate_pairs
 
     expect(pairs).to be_empty
     expect(diagnostics[:large_ip_groups_skipped]).to be >= 1
@@ -68,7 +68,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     AccountSecurity::BrowserContinuity.create!(user_id: user_a.id, token_hash: token_hash, first_seen_at: now, last_seen_at: now, observation_count: 1)
     AccountSecurity::BrowserContinuity.create!(user_id: user_b.id, token_hash: token_hash, first_seen_at: now, last_seen_at: now, observation_count: 1)
 
-    pairs, _truncated, _index, _context, _diagnostics = described_class.candidate_pairs
+    pairs, _truncated, _index, _context, _temporal_index, _diagnostics = described_class.candidate_pairs
 
     expect(pairs).not_to include([user_a.id, user_b.id].sort)
   end
@@ -87,7 +87,7 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
       last_seen_at: Time.zone.now,
     )
 
-    pairs, _truncated, _index, _context, diagnostics = described_class.candidate_pairs
+    pairs, _truncated, _index, _context, _temporal_index, diagnostics = described_class.candidate_pairs
 
     expect(pairs).to include([correlation.user_a_id, correlation.user_b_id])
     expect(diagnostics[:existing_pairs_added]).to be >= 1

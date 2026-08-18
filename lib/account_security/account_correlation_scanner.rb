@@ -63,7 +63,7 @@ module ::AccountSecurity
         )
 
         signature_count = SessionSignatureRecorder.backfill_active_tokens!
-        pairs, truncated, exact_index, scan_context, diagnostics = candidate_pairs
+        pairs, truncated, exact_index, scan_context, temporal_index, diagnostics = candidate_pairs
         found = 0
         processed = 0
 
@@ -71,13 +71,19 @@ module ::AccountSecurity
           batch.each do |user_a_id, user_b_id|
             processed += 1
             exact_details = exact_index.shared_details(user_a_id, user_b_id)
+            supplemental = scan_context.evidence_for_pair(user_a_id, user_b_id)
+            supplemental["temporal_evidence"] = temporal_index.evidence_for_pair(
+              user_a_id,
+              user_b_id,
+              shared_ips: exact_details.map { |detail| detail["ip_address"] },
+            )
             found += 1 if AccountCorrelationService.recalculate_pair!(
               user_a_id,
               user_b_id,
               observed_at: started_at,
               source: scan_source == "scheduled" ? "scheduled_scan" : "backfill_scan",
               precomputed_ip_details: exact_details,
-              precomputed_supplemental: scan_context.evidence_for_pair(user_a_id, user_b_id),
+              precomputed_supplemental: supplemental,
             )
           end
           write_status(
@@ -148,6 +154,8 @@ module ::AccountSecurity
       pairs = Set.new(pairs.to_a.first(MAX_PAIR_CANDIDATES)) if truncated
 
       diagnostics = exact_index.diagnostics.dup
+      temporal_index = TemporalCorrelationEvidence.build_scan_index
+      diagnostics.merge!(temporal_index.diagnostics)
       scan_context = AccountCorrelationScanContext.new
 
       unless truncated
@@ -184,7 +192,7 @@ module ::AccountSecurity
       end
       diagnostics[:total_candidate_pairs] = pairs.length
 
-      [pairs.to_a, truncated, exact_index, scan_context, diagnostics]
+      [pairs.to_a, truncated, exact_index, scan_context, temporal_index, diagnostics]
     end
 
     def write_status(**values)

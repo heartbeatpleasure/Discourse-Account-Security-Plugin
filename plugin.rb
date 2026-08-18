@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.7.0
+# version: 0.8.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.7.0"
+  PLUGIN_VERSION = "0.8.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -57,6 +57,7 @@ after_initialize do
     lib/account_security/session_signature_recorder.rb
     lib/account_security/browser_continuity_recorder.rb
     lib/account_security/core_ip_evidence.rb
+    lib/account_security/temporal_correlation_evidence.rb
     lib/account_security/account_correlation_policy.rb
     lib/account_security/account_correlation_service.rb
     lib/account_security/account_correlation_scan_context.rb

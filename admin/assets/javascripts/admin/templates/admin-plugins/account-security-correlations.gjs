@@ -186,6 +186,8 @@ export default RouteTemplate(
         cursor: pointer;
         list-style: none;
       }
+      .as-correlation__group-summary::marker,
+      .as-correlation__candidate-summary-line::marker { content: ""; }
       .as-correlation__group-summary::-webkit-details-marker,
       .as-correlation__candidate-summary-line::-webkit-details-marker { display: none; }
       .as-correlation__disclosure-icon {
@@ -199,6 +201,7 @@ export default RouteTemplate(
         border-radius: 999px;
         background: var(--secondary);
         color: var(--as-muted);
+        margin-left: .25rem;
         transition: transform .15s ease, background .15s ease, color .15s ease;
       }
       .as-correlation__disclosure-icon .d-icon {
@@ -364,6 +367,44 @@ export default RouteTemplate(
         margin-top: .6rem;
         font-size: var(--font-down-1);
       }
+      .as-correlation__temporal-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: .6rem;
+        margin-top: .7rem;
+      }
+      .as-correlation__temporal-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .7rem;
+        margin-top: .7rem;
+      }
+      .as-correlation__temporal-card {
+        min-width: 0;
+        padding: .8rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--secondary);
+      }
+      .as-correlation__temporal-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+      }
+      .as-correlation__temporal-account-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .75rem;
+        margin-top: .65rem;
+      }
+      .as-correlation__temporal-account-grid .as-correlation__value {
+        font-size: var(--font-down-1);
+      }
+      .as-correlation__temporal-account-grid .as-correlation__muted {
+        margin-top: .2rem;
+        font-size: var(--font-down-1);
+      }
       .as-correlation__breakdown {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -428,6 +469,8 @@ export default RouteTemplate(
         .as-correlation__filters { grid-template-columns: 1fr 1fr; }
         .as-correlation__candidate-meta { grid-template-columns: 1fr; }
         .as-correlation__group-accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-correlation__temporal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-correlation__temporal-list { grid-template-columns: 1fr; }
       }
       @media (max-width: 700px) {
         .as-correlation__hero,
@@ -441,6 +484,8 @@ export default RouteTemplate(
         .as-correlation__group-summary,
         .as-correlation__candidate-summary-line { align-items: flex-start; }
         .as-correlation__group-accounts { grid-template-columns: 1fr; }
+        .as-correlation__temporal-summary,
+        .as-correlation__temporal-account-grid { grid-template-columns: 1fr; }
       }
       @media (max-width: 520px) {
         .as-correlation__compact-grid,
@@ -481,6 +526,9 @@ export default RouteTemplate(
 
         {{#if @controller.data.scoring_refresh_required}}
           <div class="as-correlation__notice" style="margin-top: .9rem;">{{i18n "admin.account_security.correlations.scoring_refresh_required"}}</div>
+        {{/if}}
+        {{#if @controller.data.temporal_refresh_required}}
+          <div class="as-correlation__notice" style="margin-top: .9rem;">{{i18n "admin.account_security.correlations.temporal_refresh_required"}}</div>
         {{/if}}
 
         <div class="as-correlation__scan-stack">
@@ -572,7 +620,6 @@ export default RouteTemplate(
               {{#each @controller.data.shared_ip_groups as |group|}}
                 <details class="as-correlation__group">
                   <summary class="as-correlation__group-summary">
-                    <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
                     <div class="as-correlation__summary-main">
                       <div class="as-correlation__summary-title">
                         <span class="as-correlation__ip-address">{{group.ip_address}}</span>
@@ -587,11 +634,13 @@ export default RouteTemplate(
                       {{#if group.mobile}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_mobile"}}</span>{{/if}}
                       {{#if group.trusted}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_trusted"}}</span>{{/if}}
                     </div>
+                    <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
                   </summary>
                   <div class="as-correlation__group-body">
                     <div class="as-correlation__group-meta">
                       <span>{{i18n "admin.account_security.correlations.group_registration_accounts" count=group.registration_account_count}}</span>
                       <span>{{i18n "admin.account_security.correlations.group_auth_accounts" count=group.auth_account_count}}</span>
+                      {{#if group.temporal_aligned_pair_count}}<span>{{i18n "admin.account_security.correlations.group_temporal_pairs" count=group.temporal_aligned_pair_count}}</span>{{/if}}
                       <span>{{i18n "admin.account_security.correlations.ip_context"}}: {{group.context_display}}</span>
                     </div>
                     <div class="as-correlation__group-accounts">
