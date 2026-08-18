@@ -82,7 +82,15 @@ module ::AccountSecurity
     end
 
     def normalize_user_agent(value)
-      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, MAX_USER_AGENT_BYTES).presence
+      text = value.to_s.scrub("�").gsub(/[[:cntrl:]]+/, " ").squish
+      return nil if text.blank?
+
+      # Keep the historical byte bound without leaving an invalid UTF-8 tail
+      # when a deliberately oversized/non-ASCII header ends on a multibyte
+      # boundary. Only this normalized value is HMACed; the raw UA is not stored.
+      text.byteslice(0, MAX_USER_AGENT_BYTES).to_s.scrub.presence
+    rescue EncodingError, ArgumentError
+      nil
     end
 
     def retention_cutoff

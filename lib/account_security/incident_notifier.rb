@@ -121,7 +121,10 @@ module ::AccountSecurity
           kind: I18n.t("account_security.notification.kinds.#{kind}"),
           severity: severity,
           event_type: event_type,
-          user: event.user&.username || I18n.t("account_security.notification.no_user"),
+          user: SafeText.markdown_plain(
+            event.user&.username || I18n.t("account_security.notification.no_user"),
+            max_chars: 80,
+          ),
           network_context: coarse_context(event),
           ip_line: ip_line(event),
           event_url: "#{Discourse.base_url}/admin/plugins/account-security-events/#{event.id}",
@@ -140,7 +143,8 @@ module ::AccountSecurity
     def coarse_context(event)
       context = event.context.is_a?(Hash) ? event.context : {}
       parts = []
-      parts << context["usage_type"].to_s if context["usage_type"].present?
+      usage_type = SafeText.markdown_plain(context["usage_type"], max_chars: 120)
+      parts << usage_type if usage_type.present?
       parts << I18n.t("account_security.notification.context.tor") if context["is_tor"] == true
       if context["local_blacklist_match"] == true
         parts << I18n.t("account_security.notification.context.local_blacklist")
@@ -148,9 +152,10 @@ module ::AccountSecurity
       if context["staff_targeted"] == true
         parts << I18n.t("account_security.notification.context.staff_targeted")
       end
-      parts << event.ip_intelligence&.country_code.to_s if event.ip_intelligence&.country_code.present?
+      country = event.ip_intelligence&.country_code.to_s
+      parts << country if country.match?(/\A[A-Z]{2}\z/)
       parts = [I18n.t("account_security.notification.context.unavailable")] if parts.empty?
-      parts.join(" / ").first(180)
+      SafeText.plain(parts.join(" / "), max_chars: 180)
     end
 
     def ip_line(event)

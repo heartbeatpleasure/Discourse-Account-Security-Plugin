@@ -42,4 +42,13 @@ RSpec.describe AccountSecurity::SessionSignatureRecorder do
     ).to be_nil
     expect(AccountSecurity::SessionSignature.count).to eq(0)
   end
+  it "keeps oversized multibyte user agents bounded and valid before hashing" do
+    normalized = described_class.normalize_user_agent("é" * 700)
+
+    expect(normalized).to be_present
+    expect(normalized).to be_valid_encoding
+    expect(normalized.bytesize).to be <= described_class::MAX_USER_AGENT_BYTES
+    expect(described_class.signature_for("é" * 700)).to match(/\A[0-9a-f]{64}\z/)
+  end
+
 end

@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.21.0
+# version: 0.22.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.21.0"
+  PLUGIN_VERSION = "0.22.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -48,6 +48,7 @@ after_initialize do
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
   %w[
+    lib/account_security/safe_text.rb
     lib/account_security/ip_normalizer.rb
     lib/account_security/risk_policy.rb
     lib/account_security/cache_policy.rb
@@ -192,6 +193,7 @@ after_initialize do
     # was requested as part of the same operation.
     ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
     ::AccountSecurity::SessionObservation.where(user_id: user.id).delete_all
+    ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
     correlation_ids = ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).pluck(:id)
     ::AccountSecurity::CorrelationReview.where(account_correlation_id: correlation_ids).delete_all if correlation_ids.any?
     ::AccountSecurity::CorrelationReview.where(actor_user_id: user.id).update_all(actor_user_id: nil)
@@ -205,7 +207,6 @@ after_initialize do
 
     ::AccountSecurity::UserNetwork.where(user_id: user.id).delete_all
     ::AccountSecurity::NotificationSuppression.where(user_id: user.id).delete_all
-    ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
   end
 
   Discourse::Application.routes.append do

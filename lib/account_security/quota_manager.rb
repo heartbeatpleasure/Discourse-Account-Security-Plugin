@@ -8,6 +8,10 @@ module ::AccountSecurity
     Decision = Struct.new(:allowed, :reason, keyword_init: true)
 
     QUOTA_MUTEX_KEY = "account-security-provider-quota"
+    # Keep provider-supplied reset timestamps bounded even before the provider
+    # adapter is loaded. This file intentionally loads before AbuseIpDb to
+    # avoid a circular load dependency (the provider records responses here).
+    MAX_RATE_RESET_FUTURE_SECONDS = 48.hours.to_i
 
     def authorize(trigger)
       DistributedMutex.synchronize(QUOTA_MUTEX_KEY, validity: 5) do
@@ -51,7 +55,7 @@ module ::AccountSecurity
         now = Time.zone.now
         limit = nonnegative_integer(headers["x-ratelimit-limit"])
         remaining = nonnegative_integer(headers["x-ratelimit-remaining"])
-        reset_epoch = nonnegative_integer(headers["x-ratelimit-reset"])
+        reset_epoch = bounded_reset_epoch(headers["x-ratelimit-reset"], now: now)
         reset_at = reset_epoch ? Time.at(reset_epoch).utc : nil
 
         row = ProviderUsage.find_or_initialize_by(provider: "abuseipdb", endpoint: endpoint_name)
@@ -115,6 +119,17 @@ module ::AccountSecurity
 
     def redis_key(name)
       "account_security:quota:#{Time.now.utc.strftime('%Y%m%d')}:#{name}"
+    end
+
+    def bounded_reset_epoch(value, now: Time.zone.now)
+      epoch = nonnegative_integer(value)
+      return nil unless epoch
+
+      current = now.to_i
+      return nil if epoch < current - 5.minutes.to_i
+      return nil if epoch > current + MAX_RATE_RESET_FUTURE_SECONDS
+
+      epoch
     end
 
     def nonnegative_integer(value)

@@ -48,7 +48,7 @@ module ::AccountSecurity
     end
 
     def safe_text(value, max)
-      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max).presence
+      SafeText.plain(value, max_chars: max)
     end
   end
 end

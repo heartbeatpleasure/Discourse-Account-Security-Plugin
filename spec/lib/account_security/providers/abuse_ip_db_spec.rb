@@ -28,7 +28,7 @@ RSpec.describe AccountSecurity::Providers::AbuseIpDb do
         "reports" => [{ "comment" => "must not be retained" }],
       },
     }
-    normalized = client.send(:normalize_check, payload)
+    normalized = client.send(:normalize_check, payload, expected_ip: "8.8.8.8")
     expect(normalized["abuseConfidenceScore"]).to eq(75)
     expect(normalized).not_to have_key("reports")
     expect(normalized.to_json).not_to include("must not be retained")
@@ -41,4 +41,51 @@ RSpec.describe AccountSecurity::Providers::AbuseIpDb do
 
     expect(AccountSecurity::CircuitBreaker).not_to have_received(:open_until!)
   end
+  it "rejects a successful CHECK payload for a different IP" do
+    payload = {
+      "data" => {
+        "ipAddress" => "1.1.1.1",
+        "abuseConfidenceScore" => 10,
+      },
+    }
+
+    expect {
+      client.send(:normalize_check, payload, expected_ip: "8.8.8.8")
+    }.to raise_error(JSON::ParserError, /mismatched check IP/)
+  end
+
+  it "rejects a successful report payload for a different IP" do
+    payload = {
+      "data" => {
+        "ipAddress" => "1.1.1.1",
+        "abuseConfidenceScore" => 10,
+      },
+    }
+
+    expect {
+      client.send(:normalize_report, payload, expected_ip: "8.8.8.8")
+    }.to raise_error(JSON::ParserError, /mismatched report IP/)
+  end
+
+  it "rejects non-public CHECK input before creating an HTTP connection" do
+    expect(Net::HTTP).not_to receive(:new)
+
+    result = client.check("127.0.0.1")
+
+    expect(result.success).to eq(false)
+    expect(result.error_code).to eq(:invalid_ip)
+  end
+
+  it "bounds provider-controlled retry and rate-reset windows" do
+    now = Time.at(1_700_000_000)
+    far_future = now.to_i + 30.days.to_i
+
+    expect(
+      client.send(:bounded_reset_epoch, far_future.to_s, now: now),
+    ).to be_nil
+    expect(
+      client.send(:bounded_reset_epoch, (now.to_i + 1.day.to_i).to_s, now: now),
+    ).to eq(now.to_i + 1.day.to_i)
+  end
+
 end

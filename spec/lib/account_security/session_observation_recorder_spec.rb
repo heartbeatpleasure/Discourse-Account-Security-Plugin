@@ -90,4 +90,19 @@ RSpec.describe AccountSecurity::SessionObservationRecorder do
       AccountSecurity::AccountCorrelationPolicy.score(with_different_browsers.except("browser_continuity_count")),
     )
   end
+  it "clamps implausibly future observation timestamps to server time" do
+    now = Time.zone.now.change(usec: 0)
+
+    observation = described_class.record!(
+      user_id: user_a.id,
+      ip: "8.8.8.8",
+      browser_token_hash: "d" * 64,
+      observed_at: now + 1.day,
+    )
+
+    expect(observation).to be_present
+    expect(observation.observed_at).to be_within(5.seconds).of(Time.zone.now)
+    expect(observation.observed_at).to be < now + 1.hour
+  end
+
 end

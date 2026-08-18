@@ -108,8 +108,7 @@ module ::AccountSecurity
     end
 
     def normalize_note(value)
-      cleaned = value.to_s.gsub(/[[:cntrl:]]+/, " ").squish
-      cleaned.each_char.take(1_000).join.presence
+      SafeText.plain(value, max_chars: 1_000)
     end
 
     def ensure_actor!(actor)

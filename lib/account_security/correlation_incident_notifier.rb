@@ -79,8 +79,14 @@ module ::AccountSecurity
         )
         raw = I18n.t(
           "account_security.correlation_notification.body",
-          user_a: correlation.user_a&.username || I18n.t("account_security.correlation_notification.unknown_user"),
-          user_b: correlation.user_b&.username || I18n.t("account_security.correlation_notification.unknown_user"),
+          user_a: SafeText.markdown_plain(
+            correlation.user_a&.username || I18n.t("account_security.correlation_notification.unknown_user"),
+            max_chars: 80,
+          ),
+          user_b: SafeText.markdown_plain(
+            correlation.user_b&.username || I18n.t("account_security.correlation_notification.unknown_user"),
+            max_chars: 80,
+          ),
           score: correlation.score.to_i,
           confidence: I18n.t(
             "account_security.correlation_notification.confidences.#{correlation.confidence}",

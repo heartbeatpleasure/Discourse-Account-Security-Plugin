@@ -17,17 +17,22 @@ module ::AccountSecurity
       REPORT_URI = URI("https://api.abuseipdb.com/api/v2/report")
       MAX_CHECK_BYTES = 256 * 1024
       MAX_BLACKLIST_BYTES = 5 * 1024 * 1024
+      MAX_RETRY_AFTER_SECONDS = 24.hours.to_i
+      MAX_RATE_RESET_FUTURE_SECONDS = 48.hours.to_i
       USER_AGENT = "Discourse-Account-Security/#{::AccountSecurity::PLUGIN_VERSION}"
 
       def check(ip)
+        expected_ip = IpNormalizer.normalize_public(ip)
+        return invalid_ip_result if expected_ip.blank?
+
         uri = CHECK_URI.dup
         uri.query = URI.encode_www_form(
-          ipAddress: ip,
+          ipAddress: expected_ip,
           maxAgeInDays: SiteSetting.account_security_abuseipdb_max_age_days.to_i.clamp(1, 365),
         )
         request = Net::HTTP::Get.new(uri.request_uri)
         perform(uri, request, endpoint: "check", max_bytes: MAX_CHECK_BYTES) do |parsed|
-          normalize_check(parsed)
+          normalize_check(parsed, expected_ip: expected_ip)
         end
       end
 
@@ -40,19 +45,20 @@ module ::AccountSecurity
       end
 
       def report_bruteforce(ip, observed_at: nil)
+        expected_ip = IpNormalizer.normalize_public(ip)
+        return invalid_ip_result if expected_ip.blank?
+
         uri = REPORT_URI.dup
         request = Net::HTTP::Post.new(uri.request_uri)
         request["Content-Type"] = "application/x-www-form-urlencoded"
         request.set_form_data(
-          "ip" => ip,
+          "ip" => expected_ip,
           "categories" => "18",
           "comment" => "Repeated authentication attempts objectively observed by the local Discourse security controls.",
           "timestamp" => (observed_at || Time.zone.now).iso8601,
         )
         perform(uri, request, endpoint: "report", max_bytes: MAX_CHECK_BYTES) do |parsed|
-          data = parsed.is_a?(Hash) ? parsed["data"] : nil
-          raise JSON::ParserError, "invalid report payload" unless data.is_a?(Hash)
-          { "ipAddress" => data["ipAddress"].to_s, "abuseConfidenceScore" => integer_or_nil(data["abuseConfidenceScore"]) }.compact
+          normalize_report(parsed, expected_ip: expected_ip)
         end
       end
 
@@ -67,7 +73,12 @@ module ::AccountSecurity
         Statistics.increment!(provider_calls: 1) if endpoint == "check"
         http.request(request) do |http_response|
           response = http_response
-          body = read_bounded_body(http_response, max_bytes)
+          status = http_response.code.to_i
+          # Error and redirect payloads are not used by Account Security. Do
+          # not spend memory parsing an untrusted third-party error body; the
+          # status and bounded response headers are sufficient for fail-open
+          # handling and quota/circuit state.
+          body = status.between?(200, 299) ? read_bounded_body(http_response, max_bytes) : ""
         end
         latency = elapsed_ms(started)
         status = response.code.to_i
@@ -107,6 +118,7 @@ module ::AccountSecurity
         http = Net::HTTP.new(uri.host, uri.port)
         http.use_ssl = true
         http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+        http.verify_hostname = true if http.respond_to?(:verify_hostname=)
         http.min_version = OpenSSL::SSL::TLS1_2_VERSION if http.respond_to?(:min_version=)
         http.open_timeout = SiteSetting.account_security_connect_timeout_ms.to_i.clamp(250, 5000) / 1000.0
         http.read_timeout = SiteSetting.account_security_read_timeout_ms.to_i.clamp(500, 10_000) / 1000.0
@@ -134,13 +146,16 @@ module ::AccountSecurity
         body
       end
 
-      def normalize_check(parsed)
+      def normalize_check(parsed, expected_ip:)
         data = parsed.is_a?(Hash) ? parsed["data"] : nil
         raise JSON::ParserError, "invalid check payload" unless data.is_a?(Hash)
+        returned_ip = IpNormalizer.normalize_public(data["ipAddress"])
+        raise JSON::ParserError, "mismatched check IP" unless returned_ip == expected_ip
+
         score = integer_or_nil(data["abuseConfidenceScore"])
         raise JSON::ParserError, "invalid score" unless score&.between?(0, 100)
         {
-          "ipAddress" => data["ipAddress"].to_s,
+          "ipAddress" => returned_ip,
           "abuseConfidenceScore" => score,
           "totalReports" => nonnegative_integer(data["totalReports"]),
           "numDistinctUsers" => nonnegative_integer(data["numDistinctUsers"]),
@@ -151,6 +166,18 @@ module ::AccountSecurity
           "countryCode" => safe_country(data["countryCode"]),
           "isTor" => data["isTor"] == true,
           "isWhitelisted" => data["isWhitelisted"] == true,
+        }.compact
+      end
+
+      def normalize_report(parsed, expected_ip:)
+        data = parsed.is_a?(Hash) ? parsed["data"] : nil
+        raise JSON::ParserError, "invalid report payload" unless data.is_a?(Hash)
+        returned_ip = IpNormalizer.normalize_public(data["ipAddress"])
+        raise JSON::ParserError, "mismatched report IP" unless returned_ip == expected_ip
+
+        {
+          "ipAddress" => returned_ip,
+          "abuseConfidenceScore" => integer_or_nil(data["abuseConfidenceScore"]),
         }.compact
       end
 
@@ -170,9 +197,11 @@ module ::AccountSecurity
 
       def handle_failure_status(status, headers, endpoint)
         if endpoint == "check" && status == 429
+          now = Time.now
           retry_after = nonnegative_integer(headers["retry-after"])
-          reset_epoch = nonnegative_integer(headers["x-ratelimit-reset"])
-          until_time = [retry_after && Time.now + retry_after, reset_epoch && Time.at(reset_epoch)].compact.max
+          retry_after = [retry_after, MAX_RETRY_AFTER_SECONDS].min if retry_after
+          reset_epoch = bounded_reset_epoch(headers["x-ratelimit-reset"], now: now)
+          until_time = [retry_after && now + retry_after, reset_epoch && Time.at(reset_epoch)].compact.max
           CircuitBreaker.open_until!(until_time) if until_time
         elsif endpoint == "check" && status.in?([401, 403])
           # Invalid/mis-scoped credentials should not be retried on every login.
@@ -205,7 +234,7 @@ module ::AccountSecurity
 
       def safe_text(value, limit)
         return nil unless value.is_a?(String)
-        value.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, limit).presence
+        SafeText.plain(value, max_chars: limit)
       end
 
       def safe_country(value)
@@ -214,10 +243,27 @@ module ::AccountSecurity
       end
 
       def safe_time(value)
-        return nil if value.blank?
-        Time.zone.parse(value.to_s)&.iso8601
+        text = SafeText.plain(value, max_chars: 128)
+        return nil if text.blank?
+
+        Time.zone.parse(text)&.iso8601
       rescue ArgumentError, TypeError
         nil
+      end
+
+      def bounded_reset_epoch(value, now: Time.now)
+        epoch = nonnegative_integer(value)
+        return nil unless epoch
+
+        current = now.to_i
+        return nil if epoch < current - 5.minutes.to_i
+        return nil if epoch > current + MAX_RATE_RESET_FUTURE_SECONDS
+
+        epoch
+      end
+
+      def invalid_ip_result
+        Result.new(success: false, status: nil, data: {}, error_code: :invalid_ip, latency_ms: 0, headers: {})
       end
 
       def integer_or_nil(value)

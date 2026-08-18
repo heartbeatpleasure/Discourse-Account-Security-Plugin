@@ -226,8 +226,7 @@ module ::AccountSecurity
     end
 
     def safe_text(value, limit = MAX_TEXT_BYTES)
-      return nil if value.blank?
-      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, limit).presence
+      SafeText.plain(value, max_chars: limit)
     end
 
     def safe_country_code(value)

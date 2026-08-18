@@ -11,6 +11,7 @@ RSpec.describe AccountSecurity::AdminController do
       [:get, "/admin/plugins/account-security/overview.json", {}],
       [:get, "/admin/plugins/account-security/events.json", {}],
       [:get, "/admin/plugins/account-security/events/1.json", {}],
+      [:put, "/admin/plugins/account-security/events/1.json", { status: "acknowledged" }],
       [:post, "/admin/plugins/account-security/events/1/refresh.json", {}],
       [:post, "/admin/plugins/account-security/events/1/user-note.json", { confirmed: true }],
       [:post, "/admin/plugins/account-security/events/1/temporary-block.json", { confirmed: true, duration_minutes: 60 }],
@@ -30,7 +31,11 @@ RSpec.describe AccountSecurity::AdminController do
       [:post, "/admin/plugins/account-security/correlations/1/duplicate-user-note.json", { confirmed: true }],
       [:post, "/admin/plugins/account-security/correlations/rebuild.json", {}],
       [:get, "/admin/plugins/account-security/trusted-networks.json", {}],
+      [:post, "/admin/plugins/account-security/trusted-networks.json", { account_security_network: "8.8.8.8/32", label: "test", reason: "test" }],
+      [:delete, "/admin/plugins/account-security/trusted-networks/1.json", {}],
       [:get, "/admin/plugins/account-security/health.json", {}],
+      [:post, "/admin/plugins/account-security/health/test.json", {}],
+      [:post, "/admin/plugins/account-security/health/reset-circuit.json", {}],
       [:post, "/admin/plugins/account-security/health/sync-feed.json", { source: "tor" }],
       [:get, "/admin/plugins/account-security/statistics.json", {}],
       [:post, "/admin/plugins/account-security/report.json", { event_id: 1, confirmed: true }],
@@ -354,6 +359,32 @@ RSpec.describe AccountSecurity::AdminController do
     expect(correlation.confidence).to eq(AccountSecurity::AccountCorrelationPolicy.confidence(live_score))
   end
 
+
+  it "treats correlation search text as data rather than SQL" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    user_a_id, user_b_id = [first.id, second.id].sort
+    AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: 50,
+      confidence: "strong",
+      status: "open",
+      evidence: {},
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations.json",
+        params: { search: "%') OR 1=1 --" }
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["total"]).to eq(0)
+    expect(AccountSecurity::AccountCorrelation.count).to eq(1)
+  end
 
 end
 

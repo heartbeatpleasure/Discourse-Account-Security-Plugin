@@ -130,7 +130,7 @@ module ::AccountSecurity
     end
 
     def target_token(value)
-      normalized = value.to_s.strip.downcase.byteslice(0, 320)
+      normalized = bounded_identifier(value)
       return nil if normalized.blank?
 
       OpenSSL::HMAC.hexdigest("SHA256", Rails.application.secret_key_base.to_s, normalized)[0, 32]
@@ -143,7 +143,7 @@ module ::AccountSecurity
       cached = Discourse.redis.get(cache_key)
       return cached == "1" unless cached.nil?
 
-      candidate = identifier.to_s.strip.byteslice(0, 320)
+      candidate = bounded_identifier(identifier, downcase: false)
       return false if candidate.blank?
 
       user = User.find_by_username_or_email(candidate)
@@ -152,6 +152,14 @@ module ::AccountSecurity
       value == "1"
     rescue StandardError
       false
+    end
+
+    def bounded_identifier(value, downcase: true)
+      text = value.to_s.scrub.strip
+      text = text.downcase if downcase
+      text.each_char.take(320).join.presence
+    rescue EncodingError, ArgumentError
+      nil
     end
 
     def setting_integer(name, min, max)

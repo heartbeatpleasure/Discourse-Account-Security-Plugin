@@ -209,6 +209,7 @@ module ::AccountSecurity
     end
 
     def correlations
+      rate_limit!("correlations-read", 60)
       page = positive_integer_value(params[:page]) || 1
       per_page = 50
       status = params[:status].to_s
@@ -279,6 +280,7 @@ module ::AccountSecurity
 
 
     def correlation_groups
+      rate_limit!("correlation-groups-read", 20)
       page = positive_integer_value(params[:page]) || 1
       status, confidence, search = correlation_filter_values
 
@@ -337,6 +339,10 @@ module ::AccountSecurity
     end
 
     def correlation_shared_ips
+      # This view intentionally scans several bounded local IP evidence sources
+      # to remain independent from stored pair rows. Bound repeated admin calls
+      # so accidental rapid tab switching cannot create unbounded concurrent work.
+      rate_limit!("correlation-shared-ips-read", 20)
       page = positive_integer_value(params[:page]) || 1
       status, confidence, search = correlation_filter_values
       scope = correlation_scope(status: status, confidence: confidence, search: search, include_users: false)
@@ -368,6 +374,10 @@ module ::AccountSecurity
 
 
     def correlation_scan_status
+      # The frontend polls this while a scan is active (normally every two
+      # seconds). Keep the allowance comfortably above normal polling while
+      # still bounding runaway clients or abandoned tabs.
+      rate_limit!("correlation-scan-status-read", 60)
       render_json_dump(scan: serialize_correlation_scan_poll(AccountCorrelationScanner.status))
     end
 
@@ -720,7 +730,7 @@ module ::AccountSecurity
     end
 
     def clean_optional(value, max)
-      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max).presence
+      SafeText.plain(value, max_chars: max)
     end
 
     def correlation_filter_values

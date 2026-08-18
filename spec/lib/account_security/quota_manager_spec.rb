@@ -19,4 +19,15 @@ RSpec.describe AccountSecurity::QuotaManager do
     expect(described_class.protected_capacity("staff_login", counts)).to eq(50)
     expect(described_class.protected_capacity("manual", counts)).to eq(0)
   end
+  it "ignores implausibly distant provider reset timestamps" do
+    now = Time.zone.at(1_700_000_000)
+
+    expect(
+      described_class.bounded_reset_epoch((now.to_i + 30.days.to_i).to_s, now: now),
+    ).to be_nil
+    expect(
+      described_class.bounded_reset_epoch((now.to_i + 1.day.to_i).to_s, now: now),
+    ).to eq(now.to_i + 1.day.to_i)
+  end
+
 end

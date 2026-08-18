@@ -92,7 +92,7 @@ module ::AccountSecurity
       return value if value.is_a?(Integer) && value >= 0
 
       max = name == "resolution_reason" ? 240 : 80
-      value.to_s.gsub(/[[:cntrl:]]+/, " ").squish.byteslice(0, max).presence
+      SafeText.plain(value, max_chars: max)
     end
 
     def safe_status(value)

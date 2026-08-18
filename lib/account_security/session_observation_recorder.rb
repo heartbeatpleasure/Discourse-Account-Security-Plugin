@@ -6,6 +6,8 @@ module ::AccountSecurity
 
     OBSERVATION_INTERVAL = 24.hours
     MAX_RELATED_USERS = 20
+    MUTEX_VALIDITY = 15
+    MAX_FUTURE_SKEW = 5.minutes
 
     def enabled?
       SiteSetting.account_security_enabled &&
@@ -24,22 +26,31 @@ module ::AccountSecurity
 
       browser_hash = normalized_hash(browser_token_hash)
       client_hash = normalized_hash(client_signature_hash)
-      observed_time = normalize_time(observed_at) || Time.zone.now
+      now = Time.zone.now
+      observed_time = normalize_time(observed_at) || now
+      observed_time = now if observed_time > now + MAX_FUTURE_SKEW
 
-      return nil unless observation_due?(
-        user_id: user.id,
-        browser_token_hash: browser_hash,
-        client_signature_hash: client_hash,
-        observed_at: observed_time,
-      )
+      observation = nil
+      DistributedMutex.synchronize(
+        "account-security-session-observation-user-#{user.id}",
+        validity: MUTEX_VALIDITY,
+      ) do
+        return nil unless observation_due?(
+          user_id: user.id,
+          browser_token_hash: browser_hash,
+          client_signature_hash: client_hash,
+          observed_at: observed_time,
+        )
 
-      observation = SessionObservation.create!(
-        user_id: user.id,
-        ip_address: normalized_ip,
-        browser_token_hash: browser_hash,
-        client_signature_hash: client_hash,
-        observed_at: observed_time,
-      )
+        observation = SessionObservation.create!(
+          user_id: user.id,
+          ip_address: normalized_ip,
+          browser_token_hash: browser_hash,
+          client_signature_hash: client_hash,
+          observed_at: observed_time,
+        )
+      end
+      return nil unless observation
 
       if browser_hash.present? && SiteSetting.account_security_browser_continuity_enabled
         BrowserContinuityRecorder.record!(

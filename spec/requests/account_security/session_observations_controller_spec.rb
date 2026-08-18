@@ -37,4 +37,21 @@ RSpec.describe AccountSecurity::SessionObservationsController do
 
     expect(response.status).to eq(204)
   end
+  it "always binds observations to the authenticated user instead of a supplied user id" do
+    other = Fabricate(:user)
+    sign_in(user)
+    allow(AccountSecurity::BrowserContinuityRecorder).to receive(:ensure_token_hash!).and_return("a" * 64)
+    allow(AccountSecurity::SessionSignatureRecorder).to receive(:signature_for).and_return("b" * 64)
+
+    expect(Jobs).to receive(:enqueue) do |job, args|
+      expect(job).to eq(:account_security_record_session_observation)
+      expect(args[:user_id]).to eq(user.id)
+      expect(args[:user_id]).not_to eq(other.id)
+    end
+
+    post "/account-security/session-observation.json", params: { user_id: other.id }
+
+    expect(response.status).to eq(204)
+  end
+
 end

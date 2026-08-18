@@ -62,4 +62,24 @@ RSpec.describe AccountSecurity::IncidentNotifier do
     expect(PostCreator).not_to have_received(:create!)
     expect(risk_event.reload.notified_at).to be_nil
   end
+  it "keeps untrusted cached provider context inert in staff Markdown" do
+    risk_event = critical_registration
+    risk_event.update!(
+      context: risk_event.context.merge(
+        "usage_type" => "[click](https://example.invalid) @admins <script>",
+      ),
+    )
+    captured = nil
+    allow(PostCreator).to receive(:create!) do |_actor, options|
+      captured = options
+      true
+    end
+
+    expect(described_class.notify_if_needed!(risk_event)).to eq(true)
+    expect(captured[:raw]).to include("\\[click\\]")
+    expect(captured[:raw]).to include("＠admins")
+    expect(captured[:raw]).not_to include("@admins")
+    expect(captured[:raw]).to include("\\<script\\>")
+  end
+
 end

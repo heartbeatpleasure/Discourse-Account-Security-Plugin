@@ -21,6 +21,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @tracked sharedIpPage = 1;
   @tracked focusedPairId = null;
   @tracked activeView = "groups";
+  @tracked loadedView = null;
   @tracked viewInitialized = false;
   @tracked calibrationOpen = false;
   @tracked calibrationLoading = false;
@@ -32,6 +33,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
 
   _scanPollTimer = null;
   _scanPollingActive = false;
+  _correlationRequestSerial = 0;
 
   resetState() {
     this.stopScanPolling();
@@ -47,6 +49,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.sharedIpPage = 1;
     this.focusedPairId = this.pairIdFromUrl();
     this.activeView = this.focusedPairId ? "pairs" : "groups";
+    this.loadedView = null;
+    this._correlationRequestSerial += 1;
     this.viewInitialized = Boolean(this.focusedPairId);
     this.calibrationOpen = false;
     this.calibrationLoading = false;
@@ -91,6 +95,10 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     return this.activeView === "pairs";
   }
 
+  get sharedIpsReady() {
+    return this.loadedView === "shared_ips";
+  }
+
   get activeTabId() {
     return `account-security-correlation-tab-${this.activeView}`;
   }
@@ -126,6 +134,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.viewInitialized = true;
 
     if (changed || (wasFocused && view !== "pairs")) {
+      this.loadedView = null;
       this.loadCorrelations();
     }
   }
@@ -1081,6 +1090,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   }
 
   async fetchCorrelations({ quiet = false } = {}) {
+    const requestSerial = ++this._correlationRequestSerial;
+    const requestedView = this.activeView;
+    const requestedFocusedPairId = this.focusedPairId;
+    const requestedPage = this.page;
+    const requestedGroupPage = this.groupPage;
+    const requestedSharedIpPage = this.sharedIpPage;
+
     if (!quiet) {
       this.isLoading = true;
     }
@@ -1095,31 +1111,31 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       const pairRequest = ajax("/admin/plugins/account-security/correlations.json", {
         data: {
           ...filters,
-          page: this.page,
-          pair_id: this.focusedPairId || undefined,
+          page: requestedPage,
+          pair_id: requestedFocusedPairId || undefined,
           include_group_context: false,
         },
       });
 
       let data;
-      if (this.focusedPairId) {
+      if (requestedFocusedPairId) {
         data = await pairRequest;
         data = {
           ...data,
           account_groups: [],
           shared_ip_groups: [],
-          account_groups_page: this.groupPage,
+          account_groups_page: requestedGroupPage,
           account_groups_per_page: 20,
           account_groups_total: 0,
-          shared_ip_page: this.sharedIpPage,
+          shared_ip_page: requestedSharedIpPage,
           shared_ip_per_page: 20,
           shared_ip_total: 0,
         };
-      } else if (this.activeView === "groups") {
+      } else if (requestedView === "groups") {
         const [pairData, groupData] = await Promise.all([
           pairRequest,
           ajax("/admin/plugins/account-security/correlations/groups.json", {
-            data: { ...filters, page: this.groupPage },
+            data: { ...filters, page: requestedGroupPage },
           }),
         ]);
         data = {
@@ -1130,21 +1146,21 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
           account_groups_per_page: groupData.per_page || 20,
           account_groups_total: groupData.total || 0,
           shared_ip_groups: [],
-          shared_ip_page: this.sharedIpPage,
+          shared_ip_page: requestedSharedIpPage,
           shared_ip_per_page: 20,
           shared_ip_total: 0,
         };
-      } else if (this.activeView === "shared_ips") {
+      } else if (requestedView === "shared_ips") {
         const [pairData, sharedIpData] = await Promise.all([
           pairRequest,
           ajax("/admin/plugins/account-security/correlations/shared-ips.json", {
-            data: { ...filters, page: this.sharedIpPage },
+            data: { ...filters, page: requestedSharedIpPage },
           }),
         ]);
         data = {
           ...pairData,
           account_groups: [],
-          account_groups_page: this.groupPage,
+          account_groups_page: requestedGroupPage,
           account_groups_per_page: 20,
           account_groups_total: 0,
           shared_ip_groups: sharedIpData.shared_ip_groups || [],
@@ -1162,27 +1178,42 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
           ...pairData,
           account_groups: [],
           shared_ip_groups: [],
-          account_groups_page: this.groupPage,
+          account_groups_page: requestedGroupPage,
           account_groups_per_page: 20,
           account_groups_total: 0,
-          shared_ip_page: this.sharedIpPage,
+          shared_ip_page: requestedSharedIpPage,
           shared_ip_per_page: 20,
           shared_ip_total: 0,
         };
       }
 
+      // A slow response from a previously selected tab must never overwrite
+      // the current view. Besides preventing stale data, this also prevents
+      // transient warnings from being rendered against a response that belongs
+      // to another tab.
+      if (
+        requestSerial !== this._correlationRequestSerial ||
+        requestedView !== this.activeView ||
+        requestedFocusedPairId !== this.focusedPairId
+      ) {
+        return false;
+      }
+
       this.data = this.decorateData(data);
+      this.loadedView = requestedFocusedPairId ? "pairs" : requestedView;
       this.initializeView(this.data);
       this.syncScanPolling();
-      if (this.focusedPairId) {
-        this.openFocusedPairAfterRender(this.focusedPairId);
+      if (requestedFocusedPairId) {
+        this.openFocusedPairAfterRender(requestedFocusedPairId);
       }
       return true;
     } catch (error) {
-      popupAjaxError(error);
+      if (requestSerial === this._correlationRequestSerial) {
+        popupAjaxError(error);
+      }
       return false;
     } finally {
-      if (!quiet) {
+      if (!quiet && requestSerial === this._correlationRequestSerial) {
         this.isLoading = false;
       }
     }

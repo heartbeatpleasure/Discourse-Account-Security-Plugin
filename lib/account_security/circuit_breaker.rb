@@ -7,10 +7,15 @@ module ::AccountSecurity
     FAILURE_KEY = "account_security:abuseipdb:failures"
     OPEN_UNTIL_KEY = "account_security:abuseipdb:open_until"
     STATE_MUTEX_KEY = "account-security-abuseipdb-circuit-state"
+    MAX_OPEN_SECONDS = 48.hours.to_i
 
     def state
       open_until = integer_value(Discourse.redis.get(OPEN_UNTIL_KEY))
       now = Time.now.to_i
+      if open_until && open_until > now + MAX_OPEN_SECONDS
+        Discourse.redis.del(OPEN_UNTIL_KEY)
+        return { state: "closed", open_until: nil }
+      end
       if open_until && open_until > now
         { state: "open", open_until: Time.at(open_until).utc.iso8601 }
       else
@@ -84,8 +89,10 @@ module ::AccountSecurity
     end
 
     def set_open_until_locked(timestamp, now:)
+      requested = [timestamp.to_i, now + MAX_OPEN_SECONDS].min
       existing = integer_value(Discourse.redis.get(OPEN_UNTIL_KEY))
-      effective = [timestamp.to_i, existing.to_i].max
+      existing = nil if existing && existing > now + MAX_OPEN_SECONDS
+      effective = [requested, existing.to_i].max
       return if effective <= now
 
       ttl = [effective - now, 60].max

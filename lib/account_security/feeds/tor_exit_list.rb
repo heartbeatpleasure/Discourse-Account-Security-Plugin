@@ -12,6 +12,7 @@ module ::AccountSecurity
 
       URI_ENDPOINT = URI("https://check.torproject.org/torbulkexitlist")
       MAX_BYTES = 2 * 1024 * 1024
+      MAX_LINE_BYTES = 128
       MUTEX_KEY = "account-security-feed-sync-tor"
 
       def sync!
@@ -26,7 +27,11 @@ module ::AccountSecurity
         response, body = fetch
         raise "unexpected_status" unless response.code.to_i == 200
 
-        ips = body.lines.filter_map { |line| IpNormalizer.normalize_public(line.strip) }.uniq
+        ips = body.each_line.filter_map do |line|
+          next if line.bytesize > MAX_LINE_BYTES
+
+          IpNormalizer.normalize_public(line.strip)
+        end.uniq
         raise "implausible_feed" if ips.length < 20 || ips.length > 20_000
 
         replace!(ips)
@@ -58,15 +63,22 @@ module ::AccountSecurity
         http = Net::HTTP.new(URI_ENDPOINT.host, URI_ENDPOINT.port)
         http.use_ssl = true
         http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+        http.verify_hostname = true if http.respond_to?(:verify_hostname=)
         http.min_version = OpenSSL::SSL::TLS1_2_VERSION if http.respond_to?(:min_version=)
         http.open_timeout = 2
         http.read_timeout = 5
+        http.write_timeout = 5 if http.respond_to?(:write_timeout=)
+        http.max_retries = 0 if http.respond_to?(:max_retries=)
         request = Net::HTTP::Get.new(URI_ENDPOINT.request_uri)
         request["User-Agent"] = "Discourse-Account-Security/#{::AccountSecurity::PLUGIN_VERSION}"
         response = nil
         body = +""
         http.request(request) do |r|
           response = r
+          status = r.code.to_i
+          raise "redirect_not_allowed" if status.between?(300, 399)
+          next unless status == 200
+
           length = Integer(r["Content-Length"], exception: false)
           raise "response_too_large" if length && length > MAX_BYTES
           r.read_body do |chunk|
@@ -74,7 +86,6 @@ module ::AccountSecurity
             body << chunk
           end
         end
-        raise "redirect_not_allowed" if response.code.to_i.between?(300, 399)
         [response, body]
       end
 

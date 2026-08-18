@@ -1399,6 +1399,7 @@ export default RouteTemplate(
                   <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.shared_ip_groups_description"}}</p>
                 </div>
                 <div class="as-correlation__view-note" style="margin-top: .8rem;">{{i18n "admin.account_security.correlations.shared_ip_score_note"}}</div>
+                {{#if @controller.sharedIpsReady}}
                 {{#unless @controller.data.shared_ip_source_complete}}
                   <div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.shared_ip_source_incomplete"}}</div>
                 {{/unless}}
@@ -1472,6 +1473,9 @@ export default RouteTemplate(
                   </div>
                 {{else}}
                   <div class="as-correlation__empty" style="margin-top: .85rem;">{{i18n "admin.account_security.correlations.no_shared_ip_groups"}}</div>
+                {{/if}}
+                {{else}}
+                  <div class="as-correlation__empty" style="margin-top: .85rem;">{{i18n "admin.account_security.loading"}}</div>
                 {{/if}}
               </section>
             {{else}}
