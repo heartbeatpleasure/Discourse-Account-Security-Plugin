@@ -86,6 +86,9 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation).to be_present
     expect(correlation.evidence["shared_network_count"]).to eq(2)
     expect(correlation.evidence["shared_session_signature_count"]).to eq(2)
+    expect(correlation.evidence["shared_session_client_signature_count"]).to eq(1)
+    expect(correlation.evidence["client_signature_group_count"]).to eq(1)
+    expect(correlation.evidence["client_signature_evidence_source_count"]).to eq(1)
   end
   it "stores aggregate temporal evidence without copying source timestamps into correlation evidence" do
     base = 1.day.ago.change(usec: 0)
@@ -150,6 +153,86 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(result.candidate_now).to eq(false)
     expect(result.correlation).to be_present
     expect(result.correlation.evidence["shared_network_count"]).to eq(1)
+  end
+
+  it "keeps the v2 shared-network fields while exposing a deduplicated network signal for scoring v3" do
+    exact_details = [
+      {
+        "ip_address" => "8.8.8.8",
+        "public" => true,
+        "trusted" => false,
+        "user_count" => 2,
+        "sources_a" => ["registration"],
+        "sources_b" => ["registration"],
+      },
+    ]
+    supplemental = {
+      "shared_networks" => ["8.8.8.8/32"],
+      "shared_network_user_counts" => { "8.8.8.8/32" => 2 },
+      "max_shared_network_users" => 2,
+      "temporal_evidence" => AccountSecurity::TemporalCorrelationEvidence.empty_evidence,
+    }
+
+    evidence = described_class.build_evidence(
+      user_a,
+      user_b,
+      precomputed_ip_details: exact_details,
+      precomputed_supplemental: supplemental,
+    )
+
+    expect(evidence["shared_network_count"]).to eq(1)
+    expect(evidence["shared_networks"]).to eq(["8.8.8.8/32"])
+    expect(evidence["shared_independent_network_count"]).to eq(0)
+    expect(evidence["shared_exact_ip_network_overlap_count"]).to eq(1)
+    expect(evidence["shared_independent_networks"]).to eq([])
+    expect(evidence["max_independent_shared_network_users"]).to eq(0)
+    expect(evidence).not_to have_key("shared_network_user_counts")
+  end
+
+  it "preserves the new evidence-completion fields from a precomputed full scan" do
+    temporal = AccountSecurity::TemporalCorrelationEvidence.empty_evidence.merge(
+      "temporal_ip_population_complete" => true,
+      "temporal_within_6h_count" => 2,
+      "temporal_within_72h_count" => 3,
+      "temporal_within_7d_count" => 4,
+      "max_temporal_ip_users_24h" => 3,
+      "auth_proximity_closest_gap_seconds" => 1.hour.to_i,
+      "auth_proximity_within_6h_count" => 2,
+      "auth_proximity_within_7d_count" => 5,
+      "public_ip_transition_closest_gap_seconds" => 2.days.to_i,
+      "aligned_public_ip_transition_30d_count" => 1,
+      "public_ip_transition_population_complete" => true,
+      "max_public_ip_transition_users" => 2,
+    )
+
+    evidence = described_class.build_evidence(
+      user_a,
+      user_b,
+      precomputed_ip_details: [],
+      precomputed_supplemental: {
+        "shared_networks" => [],
+        "shared_session_signature_count" => 2,
+        "shared_session_client_signature_count" => 2,
+        "repeated_shared_session_signature_count" => 1,
+        "repeated_shared_session_client_signature_count" => 1,
+        "temporal_evidence" => temporal.merge(
+          "shared_auth_client_signature_count" => 3,
+          "repeated_shared_auth_client_signature_count" => 2,
+        ),
+      },
+    )
+
+    expect(evidence["client_signature_group_count"]).to eq(3)
+    expect(evidence["repeated_client_signature_group_count"]).to eq(2)
+    expect(evidence["client_signature_evidence_source_count"]).to eq(2)
+    expect(evidence["temporal_ip_population_complete"]).to eq(true)
+    expect(evidence["temporal_within_6h_count"]).to eq(2)
+    expect(evidence["temporal_within_72h_count"]).to eq(3)
+    expect(evidence["max_temporal_ip_users_24h"]).to eq(3)
+    expect(evidence["auth_proximity_closest_gap_seconds"]).to eq(1.hour.to_i)
+    expect(evidence["auth_proximity_within_7d_count"]).to eq(5)
+    expect(evidence["aligned_public_ip_transition_30d_count"]).to eq(1)
+    expect(evidence["max_public_ip_transition_users"]).to eq(2)
   end
 
 end

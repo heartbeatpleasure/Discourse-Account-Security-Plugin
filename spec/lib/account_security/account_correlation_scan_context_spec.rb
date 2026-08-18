@@ -48,10 +48,35 @@ RSpec.describe AccountSecurity::AccountCorrelationScanContext do
     expect(pairs).to include([user_a.id, user_b.id].sort)
     expect(evidence["shared_networks"]).to include("8.8.8.8/32")
     expect(evidence["shared_session_signature_count"]).to eq(1)
+    expect(evidence["shared_session_client_signature_count"]).to eq(1)
     expect(evidence["repeated_shared_session_signature_count"]).to eq(1)
+    expect(evidence["repeated_shared_session_client_signature_count"]).to eq(1)
     expect(evidence["shared_session_signature_paired_observations"]).to eq(3)
     expect(evidence["browser_continuity_count"]).to eq(1)
     expect(evidence["repeated_browser_continuity_count"]).to eq(1)
     expect(evidence["browser_continuity_paired_observations"]).to eq(2)
   end
+  it "deduplicates the same client signature across shared networks for the v3-ready summary" do
+    now = Time.zone.now
+    %w[8.8.8.8/32 1.1.1.1/32].each do |network|
+      [user_a, user_b].each do |user|
+        AccountSecurity::SessionSignature.create!(
+          user_id: user.id,
+          network_key: network,
+          signature_hash: "f" * 64,
+          first_seen_at: now - 1.day,
+          last_seen_at: now,
+          observation_count: 2,
+        )
+      end
+    end
+
+    evidence = described_class.new.evidence_for_pair(user_a.id, user_b.id)
+
+    expect(evidence["shared_session_signature_count"]).to eq(2)
+    expect(evidence["shared_session_client_signature_count"]).to eq(1)
+    expect(evidence["repeated_shared_session_signature_count"]).to eq(2)
+    expect(evidence["repeated_shared_session_client_signature_count"]).to eq(1)
+  end
+
 end

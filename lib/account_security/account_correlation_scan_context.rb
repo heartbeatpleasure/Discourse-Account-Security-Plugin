@@ -65,6 +65,12 @@ module ::AccountSecurity
         @signature_meta_by_user[user_a_id],
         @signature_meta_by_user[user_b_id],
       )
+      shared_client_signatures = shared_signature_keys.map { |_network, signature| signature }.uniq
+      repeated_shared_client_signatures = shared_signature_keys.filter_map do |key|
+        row_a = @signature_meta_by_user[user_a_id][key] || {}
+        row_b = @signature_meta_by_user[user_b_id][key] || {}
+        key[1] if row_a[:observation_count].to_i >= 2 && row_b[:observation_count].to_i >= 2
+      end.uniq
 
       shared_browser_tokens = @browser_tokens_by_user[user_a_id] & @browser_tokens_by_user[user_b_id]
       browser_summary = observation_summary(
@@ -73,12 +79,15 @@ module ::AccountSecurity
         @browser_meta_by_user[user_b_id],
       )
       max_browser_users = shared_browser_tokens.map { |token| @browser_token_users[token].length }.max.to_i
-      max_network_users = shared_networks.map { |network| @network_users[network].length }.max.to_i
+      shared_network_user_counts = shared_networks.index_with { |network| @network_users[network].length }
+      max_network_users = shared_network_user_counts.values.max.to_i
 
       {
         "shared_networks" => shared_networks.sort,
         "shared_session_signature_count" => shared_signature_keys.length,
+        "shared_session_client_signature_count" => shared_client_signatures.length,
         "repeated_shared_session_signature_count" => signature_summary[:repeated_count],
+        "repeated_shared_session_client_signature_count" => repeated_shared_client_signatures.length,
         "shared_session_signature_paired_observations" => signature_summary[:paired_observations],
         "shared_session_signature_span_days" => signature_summary[:max_span_days],
         "browser_continuity_count" => shared_browser_tokens.length,
@@ -87,6 +96,10 @@ module ::AccountSecurity
         "browser_continuity_paired_observations" => browser_summary[:paired_observations],
         "browser_continuity_span_days" => browser_summary[:max_span_days],
         "max_shared_network_users" => max_network_users,
+        # Internal scan-only input used by AccountCorrelationService to derive a
+        # v3-ready network signal that does not double count exact-IP overlap.
+        # This map is intentionally not persisted in correlation evidence.
+        "shared_network_user_counts" => shared_network_user_counts,
       }
     end
 

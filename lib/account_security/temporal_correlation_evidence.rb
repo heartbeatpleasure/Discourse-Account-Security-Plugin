@@ -6,17 +6,41 @@ module ::AccountSecurity
   module TemporalCorrelationEvidence
     module_function
 
-    EVIDENCE_VERSION = 3
-    AUTH_PATTERN_EVIDENCE_VERSION = 2
+    EVIDENCE_VERSION = 4
+    AUTH_PATTERN_EVIDENCE_VERSION = 3
     MAX_AUTH_ROWS = 100_000
     MAX_PAIR_AUTH_ROWS_PER_USER = 5_000
     MAX_DETAILS = 8
     MAX_AUTH_PROXIMITY_DETAILS = 6
     MAX_TRANSITION_DETAILS = 6
-    AUTH_PROXIMITY_WINDOW = 30.minutes.to_i
-    AUTH_TIGHT_PROXIMITY_WINDOW = 5.minutes.to_i
-    TRANSITION_ALIGNMENT_WINDOW = 7.days.to_i
-    TRANSITION_TIGHT_ALIGNMENT_WINDOW = 24.hours.to_i
+
+    AUTH_PROXIMITY_WINDOWS = {
+      within_5m_count: 5.minutes.to_i,
+      within_30m_count: 30.minutes.to_i,
+      within_1h_count: 1.hour.to_i,
+      within_6h_count: 6.hours.to_i,
+      within_24h_count: 24.hours.to_i,
+      within_72h_count: 72.hours.to_i,
+      within_7d_count: 7.days.to_i,
+    }.freeze
+    AUTH_PROXIMITY_WINDOW = AUTH_PROXIMITY_WINDOWS[:within_7d_count]
+
+    TRANSITION_ALIGNMENT_WINDOWS = {
+      within_1h_count: 1.hour.to_i,
+      within_6h_count: 6.hours.to_i,
+      within_24h_count: 24.hours.to_i,
+      within_3d_count: 3.days.to_i,
+      within_7d_count: 7.days.to_i,
+      within_30d_count: 30.days.to_i,
+      within_90d_count: 90.days.to_i,
+      within_180d_count: 180.days.to_i,
+    }.freeze
+
+    TEMPORAL_POPULATION_WINDOWS = {
+      users_24h: 24.hours.to_i,
+      users_7d: 7.days.to_i,
+      users_30d: 30.days.to_i,
+    }.freeze
     TIMED_SOURCES = %w[registration history auth_session].freeze
 
     class ScanIndex
@@ -26,12 +50,17 @@ module ::AccountSecurity
         @times_by_user = Hash.new do |users, user_id|
           users[user_id] = Hash.new { |ips, ip| ips[ip] = [] }
         end
+        @times_by_ip = Hash.new do |ips, ip|
+          ips[ip] = Hash.new { |users, user_id| users[user_id] = [] }
+        end
+        @normalized_ip_population_times_cache = {}
         @auth_events_by_user = Hash.new { |hash, user_id| hash[user_id] = [] }
         @auth_signature_users = Hash.new { |hash, signature| hash[signature] = Set.new }
         @normalized_auth_events_cache = {}
         @auth_events_by_ip_cache = {}
         @auth_signature_counts_cache = {}
         @public_transition_times_cache = {}
+        @public_transition_population_cache = nil
         @public_cache = {}
         @population_complete = population_complete == true
         @auth_history_complete = auth_history_complete == true
@@ -44,16 +73,21 @@ module ::AccountSecurity
           auth_pattern_rows: 0,
           auth_pattern_signature_rows: 0,
           auth_pattern_history_complete: @auth_history_complete,
+          temporal_ip_population_complete: @population_complete,
+          public_transition_population_complete: @population_complete && @auth_history_complete,
         }
       end
 
       def mark_population_complete!
         @population_complete = true
+        diagnostics[:temporal_ip_population_complete] = true
+        diagnostics[:public_transition_population_complete] = @auth_history_complete
       end
 
       def mark_auth_history_complete!
         @auth_history_complete = true
         diagnostics[:auth_pattern_history_complete] = true
+        diagnostics[:public_transition_population_complete] = @population_complete
       end
 
       def add(user_id, ip_value, source, observed_at)
@@ -66,6 +100,8 @@ module ::AccountSecurity
         return if ip.blank? || time.blank?
 
         @times_by_user[user_id][ip] << time
+        @times_by_ip[ip][user_id] << time
+        @normalized_ip_population_times_cache.delete([ip, user_id])
         diagnostics[:temporal_observation_rows] += 1
         key = "temporal_#{source}_rows".to_sym
         diagnostics[key] += 1 if diagnostics.key?(key)
@@ -90,6 +126,7 @@ module ::AccountSecurity
         @auth_events_by_ip_cache.delete(user_id)
         @auth_signature_counts_cache.delete(user_id)
         @public_transition_times_cache.delete(user_id)
+        @public_transition_population_cache = nil
         diagnostics[:auth_pattern_rows] += 1
 
         if signature.present?
@@ -102,6 +139,8 @@ module ::AccountSecurity
         @auth_history_complete = false
         diagnostics[:temporal_auth_log_truncated] = true
         diagnostics[:auth_pattern_history_complete] = false
+        diagnostics[:temporal_ip_population_complete] = false
+        diagnostics[:public_transition_population_complete] = false
       end
 
       def evidence_for_pair(user_a_id, user_b_id, shared_ips: nil)
@@ -117,43 +156,65 @@ module ::AccountSecurity
           times_b = normalized_times(b[ip])
           next if times_a.empty? || times_b.empty?
 
-          gap_seconds = closest_gap(times_a, times_b)
-          next if gap_seconds.nil?
+          closest = closest_pair(times_a, times_b)
+          next if closest.nil?
 
-          {
+          detail = {
             "ip_address" => ip,
             "public" => public_ip?(ip),
-            "closest_gap_seconds" => gap_seconds,
+            "closest_gap_seconds" => closest[:gap],
             "observations_a" => times_a.length,
             "observations_b" => times_b.length,
+            "temporal_population_complete" => @population_complete,
           }
+          if @population_complete
+            center = midpoint(closest[:a], closest[:b])
+            TEMPORAL_POPULATION_WINDOWS.each do |key, seconds|
+              detail["temporal_population_#{key}"] =
+                closest[:gap] <= seconds ? population_count_for_ip(ip, center, seconds) : nil
+            end
+          end
+          detail.compact
         end
 
         details.sort_by! { |detail| [detail["closest_gap_seconds"].to_i, detail["ip_address"].to_s] }
         closest_gap = details.map { |detail| detail["closest_gap_seconds"].to_i }.min
         within_15m = count_within(details, 15.minutes.to_i)
         within_1h = count_within(details, 1.hour.to_i)
+        within_6h = count_within(details, 6.hours.to_i)
         within_24h = count_within(details, 24.hours.to_i)
+        within_72h = count_within(details, 72.hours.to_i)
         within_7d = count_within(details, 7.days.to_i)
         public_within_24h = details.count do |detail|
           detail["public"] == true && detail["closest_gap_seconds"].to_i <= 24.hours.to_i
+        end
+        public_within_7d = details.count do |detail|
+          detail["public"] == true && detail["closest_gap_seconds"].to_i <= 7.days.to_i
         end
 
         {
           "temporal_evidence_version" => EVIDENCE_VERSION,
           "temporal_auth_history_complete" => @auth_history_complete,
+          "temporal_ip_population_complete" => @population_complete,
+          "temporal_population_window_basis" => "closest_pair_midpoint",
           "timed_shared_ip_count" => details.length,
           "temporal_within_15m_count" => within_15m,
           "temporal_within_1h_count" => within_1h,
+          "temporal_within_6h_count" => within_6h,
           "temporal_within_24h_count" => within_24h,
+          "temporal_within_72h_count" => within_72h,
           "temporal_within_7d_count" => within_7d,
           "temporal_public_within_24h_count" => public_within_24h,
+          "temporal_public_within_7d_count" => public_within_7d,
           "temporal_repeated_public_alignment" => public_within_24h >= 2,
           "closest_shared_ip_gap_seconds" => closest_gap,
+          "max_temporal_ip_users_24h" => max_detail_value(details, "temporal_population_users_24h"),
+          "max_temporal_ip_users_7d" => max_detail_value(details, "temporal_population_users_7d"),
+          "max_temporal_ip_users_30d" => max_detail_value(details, "temporal_population_users_30d"),
           "temporal_ip_details" => details.first(MAX_DETAILS),
           "temporal_ip_details_truncated" => details.length > MAX_DETAILS,
           "temporal_score_effect" => "none",
-        }.merge(authentication_pattern_evidence(user_a_id, user_b_id, shared_ips: ips))
+        }.compact.merge(authentication_pattern_evidence(user_a_id, user_b_id, shared_ips: ips))
       end
 
       private
@@ -176,11 +237,18 @@ module ::AccountSecurity
           auth_events_by_ip(user_b_id),
           shared_ip_set,
         )
-        close_30m = proximity_details.sum { |detail| detail["within_30m_count"].to_i }
-        close_5m = proximity_details.sum { |detail| detail["within_5m_count"].to_i }
+        proximity_totals = AUTH_PROXIMITY_WINDOWS.keys.to_h do |key|
+          [key, proximity_details.sum { |detail| detail[key.to_s].to_i }]
+        end
         same_client = proximity_details.sum { |detail| detail["same_client_within_30m_count"].to_i }
         public_proximity_ips = proximity_details.count do |detail|
           detail["public"] == true && detail["within_30m_count"].to_i.positive?
+        end
+        public_proximity_24h = proximity_details.count do |detail|
+          detail["public"] == true && detail["within_24h_count"].to_i.positive?
+        end
+        public_proximity_7d = proximity_details.count do |detail|
+          detail["public"] == true && detail["within_7d_count"].to_i.positive?
         end
 
         signature_summary = shared_client_signature_summary(user_a_id, user_b_id)
@@ -189,10 +257,18 @@ module ::AccountSecurity
         TemporalCorrelationEvidence.empty_auth_pattern_evidence.merge(
           "auth_pattern_evidence_version" => AUTH_PATTERN_EVIDENCE_VERSION,
           "auth_pattern_history_complete" => @auth_history_complete,
-          "auth_proximity_within_5m_count" => close_5m,
-          "auth_proximity_within_30m_count" => close_30m,
+          "auth_proximity_closest_gap_seconds" => max_detail_value(proximity_details, "closest_gap_seconds", mode: :min),
+          "auth_proximity_within_5m_count" => proximity_totals[:within_5m_count],
+          "auth_proximity_within_30m_count" => proximity_totals[:within_30m_count],
+          "auth_proximity_within_1h_count" => proximity_totals[:within_1h_count],
+          "auth_proximity_within_6h_count" => proximity_totals[:within_6h_count],
+          "auth_proximity_within_24h_count" => proximity_totals[:within_24h_count],
+          "auth_proximity_within_72h_count" => proximity_totals[:within_72h_count],
+          "auth_proximity_within_7d_count" => proximity_totals[:within_7d_count],
           "auth_proximity_same_client_within_30m_count" => same_client,
           "auth_proximity_public_ip_count" => public_proximity_ips,
+          "auth_proximity_public_ip_within_24h_count" => public_proximity_24h,
+          "auth_proximity_public_ip_within_7d_count" => public_proximity_7d,
           "auth_proximity_details" => proximity_details.first(MAX_AUTH_PROXIMITY_DETAILS),
           "auth_proximity_details_truncated" => proximity_details.length > MAX_AUTH_PROXIMITY_DETAILS,
           "shared_auth_client_signature_count" => signature_summary[:count],
@@ -200,19 +276,29 @@ module ::AccountSecurity
           "shared_auth_client_signature_paired_observations" => signature_summary[:paired_observations],
           "max_shared_auth_client_signature_users" => signature_summary[:max_users],
           "auth_client_signature_population_complete" => @population_complete,
-          # Keep the legacy match_count key for stored-evidence compatibility, but
-          # distinguish a repeated transition pattern from a temporally aligned
-          # transition. Scoring v3 can therefore use only the calibrated aligned
-          # signal instead of treating any same from-IP -> to-IP pattern as close.
+          # Keep the legacy match_count key for stored-evidence compatibility.
+          # v3 receives separate long-horizon alignment and population context.
           "public_ip_transition_match_count" => transition_summary[:pattern_count],
           "public_ip_transition_pattern_count" => transition_summary[:pattern_count],
+          "public_ip_transition_closest_gap_seconds" => transition_summary[:closest_gap_seconds],
+          "aligned_public_ip_transition_1h_count" => transition_summary[:within_1h_count],
+          "aligned_public_ip_transition_6h_count" => transition_summary[:within_6h_count],
           "aligned_public_ip_transition_24h_count" => transition_summary[:within_24h_count],
+          "aligned_public_ip_transition_3d_count" => transition_summary[:within_3d_count],
           "aligned_public_ip_transition_7d_count" => transition_summary[:within_7d_count],
+          "aligned_public_ip_transition_30d_count" => transition_summary[:within_30d_count],
+          "aligned_public_ip_transition_90d_count" => transition_summary[:within_90d_count],
+          "aligned_public_ip_transition_180d_count" => transition_summary[:within_180d_count],
+          "public_ip_transition_beyond_180d_count" => transition_summary[:beyond_180d_count],
           "public_ip_transition_unaligned_count" => transition_summary[:unaligned_count],
+          "public_ip_transition_population_complete" => transition_summary[:population_complete],
+          "max_public_ip_transition_users" => transition_summary[:max_users],
+          "max_public_ip_transition_users_24h" => transition_summary[:max_users_24h],
+          "max_public_ip_transition_users_7d" => transition_summary[:max_users_7d],
           "public_ip_transition_details" => transition_summary[:details].first(MAX_TRANSITION_DETAILS),
           "public_ip_transition_details_truncated" => transition_summary[:details].length > MAX_TRANSITION_DETAILS,
           "auth_pattern_score_effect" => "none",
-        )
+        ).compact
       end
 
       def build_auth_proximity_details(events_by_ip_a, events_by_ip_b, shared_ip_set)
@@ -221,27 +307,35 @@ module ::AccountSecurity
           b = events_by_ip_b[ip]
           next if a.blank? || b.blank?
 
-          matches = matched_event_pairs(a, b, AUTH_PROXIMITY_WINDOW)
-          next if matches.empty?
+          closest = closest_event_pair(a, b)
+          next if closest.nil? || closest[:gap] > AUTH_PROXIMITY_WINDOW
 
-          {
+          detail = {
             "ip_address" => ip,
             "public" => public_ip?(ip),
-            "closest_gap_seconds" => matches.map { |match| match[:gap] }.min,
-            "within_5m_count" => matches.count { |match| match[:gap] <= AUTH_TIGHT_PROXIMITY_WINDOW },
-            "within_30m_count" => matches.length,
-            "same_client_within_30m_count" => matches.count do |match|
-              signature_a = match[:a][:signature]
-              signature_b = match[:b][:signature]
-              signature_a.present? && signature_a == signature_b
-            end,
+            "closest_gap_seconds" => closest[:gap],
           }
+          matches_by_window = AUTH_PROXIMITY_WINDOWS.to_h do |key, seconds|
+            [key, matched_event_pairs(a, b, seconds)]
+          end
+          matches_by_window.each { |key, matches| detail[key.to_s] = matches.length }
+
+          close_matches = matches_by_window[:within_30m_count]
+          detail["same_client_within_30m_count"] = close_matches.count do |match|
+            signature_a = match[:a][:signature]
+            signature_b = match[:b][:signature]
+            signature_a.present? && signature_a == signature_b
+          end
+          detail
         end.sort_by { |detail| [detail["closest_gap_seconds"].to_i, detail["ip_address"].to_s] }
       end
 
       def matched_event_pairs(events_a, events_b, window_seconds)
-        a = events_a.sort_by { |event| event[:at] }
-        b = events_b.sort_by { |event| event[:at] }
+        # auth_events_by_ip is derived from auth_events_for, which is already
+        # normalized and sorted by observed time. Avoid re-sorting the same
+        # bounded arrays for every proximity horizon during large scans.
+        a = events_a
+        b = events_b
         i = 0
         j = 0
         matches = []
@@ -288,24 +382,54 @@ module ::AccountSecurity
         transitions_a = public_transition_times_for(user_a_id)
         transitions_b = public_transition_times_for(user_b_id)
         shared_keys = transitions_a.keys & transitions_b.keys
+        population_complete = @population_complete && @auth_history_complete
 
         details = shared_keys.filter_map do |key|
-          gap = closest_gap(transitions_a[key], transitions_b[key])
-          next if gap.nil? || gap > TRANSITION_ALIGNMENT_WINDOW
+          closest = closest_pair(transitions_a[key], transitions_b[key])
+          next if closest.nil?
 
-          {
+          detail = {
             "from_ip" => key[0],
             "to_ip" => key[1],
-            "closest_transition_gap_seconds" => gap,
+            "closest_transition_gap_seconds" => closest[:gap],
+            "transition_population_complete" => population_complete,
           }
+          if population_complete
+            population = transition_population_for(key)
+            center = midpoint(closest[:a], closest[:b])
+            detail["transition_user_count"] = population.length
+            detail["transition_user_count_24h"] =
+              closest[:gap] <= 24.hours.to_i ? population_count_for_transition(population, center, 24.hours.to_i) : nil
+            detail["transition_user_count_7d"] =
+              closest[:gap] <= 7.days.to_i ? population_count_for_transition(population, center, 7.days.to_i) : nil
+          end
+          detail.compact
         end
         details.sort_by! { |detail| [detail["closest_transition_gap_seconds"].to_i, detail["from_ip"], detail["to_ip"]] }
 
+        counts = TRANSITION_ALIGNMENT_WINDOWS.keys.to_h do |key|
+          seconds = TRANSITION_ALIGNMENT_WINDOWS[key]
+          [key, details.count { |detail| detail["closest_transition_gap_seconds"].to_i <= seconds }]
+        end
+
         {
           pattern_count: shared_keys.length,
-          within_24h_count: details.count { |detail| detail["closest_transition_gap_seconds"].to_i <= TRANSITION_TIGHT_ALIGNMENT_WINDOW },
-          within_7d_count: details.length,
-          unaligned_count: [shared_keys.length - details.length, 0].max,
+          closest_gap_seconds: max_detail_value(details, "closest_transition_gap_seconds", mode: :min),
+          within_1h_count: counts[:within_1h_count],
+          within_6h_count: counts[:within_6h_count],
+          within_24h_count: counts[:within_24h_count],
+          within_3d_count: counts[:within_3d_count],
+          within_7d_count: counts[:within_7d_count],
+          within_30d_count: counts[:within_30d_count],
+          within_90d_count: counts[:within_90d_count],
+          within_180d_count: counts[:within_180d_count],
+          beyond_180d_count: [shared_keys.length - counts[:within_180d_count], 0].max,
+          # Legacy meaning: patterns not aligned within seven days.
+          unaligned_count: [shared_keys.length - counts[:within_7d_count], 0].max,
+          population_complete: population_complete,
+          max_users: max_detail_value(details, "transition_user_count"),
+          max_users_24h: max_detail_value(details, "transition_user_count_24h"),
+          max_users_7d: max_detail_value(details, "transition_user_count_7d"),
           details: details,
         }
       end
@@ -351,6 +475,66 @@ module ::AccountSecurity
         transitions
       end
 
+      def transition_population_for(key)
+        public_transition_population[key] || {}
+      end
+
+      def public_transition_population
+        @public_transition_population_cache ||= begin
+          population = Hash.new { |hash, key| hash[key] = Hash.new { |users, user_id| users[user_id] = [] } }
+          @auth_events_by_user.keys.sort.each do |user_id|
+            public_transition_times_for(user_id).each do |key, times|
+              population[key][user_id].concat(times)
+            end
+          end
+          population
+        end
+      end
+
+      def population_count_for_transition(population, center, window_seconds)
+        start_at = center - (window_seconds / 2.0)
+        end_at = center + (window_seconds / 2.0)
+        population.count do |_user_id, times|
+          time_in_range?(normalized_times(times), start_at, end_at)
+        end
+      end
+
+      def population_count_for_ip(ip, center, window_seconds)
+        start_at = center - (window_seconds / 2.0)
+        end_at = center + (window_seconds / 2.0)
+        @times_by_ip[ip].count do |user_id, times|
+          cache_key = [ip, user_id]
+          normalized = @normalized_ip_population_times_cache[cache_key] ||= normalized_times(times)
+          time_in_range?(normalized, start_at, end_at)
+        end
+      end
+
+      def time_in_range?(times, start_at, end_at)
+        candidate = times.bsearch { |value| value >= start_at }
+        candidate.present? && candidate <= end_at
+      end
+
+      def midpoint(left, right)
+        Time.at((left.to_f + right.to_f) / 2.0).in_time_zone
+      end
+
+      def closest_event_pair(events_a, events_b)
+        closest_pair(
+          Array(events_a).map { |event| event[:at] }.compact.sort,
+          Array(events_b).map { |event| event[:at] }.compact.sort,
+        )
+      end
+
+      def max_detail_value(details, key, mode: :max)
+        values = Array(details).filter_map do |detail|
+          value = detail[key]
+          value.nil? ? nil : value.to_i
+        end
+        return nil if values.empty?
+
+        mode == :min ? values.min : values.max
+      end
+
       def normalized_auth_events(values)
         Array(values).compact.uniq { |event| [event[:ip], event[:at], event[:signature]] }.sort_by { |event| event[:at] }
       end
@@ -359,7 +543,7 @@ module ::AccountSecurity
         Array(values).compact.uniq.sort
       end
 
-      def closest_gap(times_a, times_b)
+      def closest_pair(times_a, times_b)
         index_a = 0
         index_b = 0
         best = nil
@@ -368,8 +552,10 @@ module ::AccountSecurity
           a = times_a[index_a]
           b = times_b[index_b]
           gap = (a - b).abs.to_i
-          best = gap if best.nil? || gap < best
-          break if best.zero?
+          if best.nil? || gap < best[:gap]
+            best = { gap: gap, a: a, b: b }
+          end
+          break if best[:gap].zero?
 
           if a < b
             index_a += 1
@@ -379,6 +565,10 @@ module ::AccountSecurity
         end
 
         best
+      end
+
+      def closest_gap(times_a, times_b)
+        closest_pair(times_a, times_b)&.dig(:gap)
       end
 
       def count_within(details, seconds)
@@ -491,10 +681,18 @@ module ::AccountSecurity
       {
         "auth_pattern_evidence_version" => AUTH_PATTERN_EVIDENCE_VERSION,
         "auth_pattern_history_complete" => false,
+        "auth_proximity_closest_gap_seconds" => nil,
         "auth_proximity_within_5m_count" => 0,
         "auth_proximity_within_30m_count" => 0,
+        "auth_proximity_within_1h_count" => 0,
+        "auth_proximity_within_6h_count" => 0,
+        "auth_proximity_within_24h_count" => 0,
+        "auth_proximity_within_72h_count" => 0,
+        "auth_proximity_within_7d_count" => 0,
         "auth_proximity_same_client_within_30m_count" => 0,
         "auth_proximity_public_ip_count" => 0,
+        "auth_proximity_public_ip_within_24h_count" => 0,
+        "auth_proximity_public_ip_within_7d_count" => 0,
         "auth_proximity_details" => [],
         "auth_proximity_details_truncated" => false,
         "shared_auth_client_signature_count" => 0,
@@ -504,9 +702,21 @@ module ::AccountSecurity
         "auth_client_signature_population_complete" => false,
         "public_ip_transition_match_count" => 0,
         "public_ip_transition_pattern_count" => 0,
+        "public_ip_transition_closest_gap_seconds" => nil,
+        "aligned_public_ip_transition_1h_count" => 0,
+        "aligned_public_ip_transition_6h_count" => 0,
         "aligned_public_ip_transition_24h_count" => 0,
+        "aligned_public_ip_transition_3d_count" => 0,
         "aligned_public_ip_transition_7d_count" => 0,
+        "aligned_public_ip_transition_30d_count" => 0,
+        "aligned_public_ip_transition_90d_count" => 0,
+        "aligned_public_ip_transition_180d_count" => 0,
+        "public_ip_transition_beyond_180d_count" => 0,
         "public_ip_transition_unaligned_count" => 0,
+        "public_ip_transition_population_complete" => false,
+        "max_public_ip_transition_users" => nil,
+        "max_public_ip_transition_users_24h" => nil,
+        "max_public_ip_transition_users_7d" => nil,
         "public_ip_transition_details" => [],
         "public_ip_transition_details_truncated" => false,
         "auth_pattern_score_effect" => "none",
@@ -517,14 +727,22 @@ module ::AccountSecurity
       {
         "temporal_evidence_version" => EVIDENCE_VERSION,
         "temporal_auth_history_complete" => false,
+        "temporal_ip_population_complete" => false,
+        "temporal_population_window_basis" => "closest_pair_midpoint",
         "timed_shared_ip_count" => 0,
         "temporal_within_15m_count" => 0,
         "temporal_within_1h_count" => 0,
+        "temporal_within_6h_count" => 0,
         "temporal_within_24h_count" => 0,
+        "temporal_within_72h_count" => 0,
         "temporal_within_7d_count" => 0,
         "temporal_public_within_24h_count" => 0,
+        "temporal_public_within_7d_count" => 0,
         "temporal_repeated_public_alignment" => false,
         "closest_shared_ip_gap_seconds" => nil,
+        "max_temporal_ip_users_24h" => nil,
+        "max_temporal_ip_users_7d" => nil,
+        "max_temporal_ip_users_30d" => nil,
         "temporal_ip_details" => [],
         "temporal_ip_details_truncated" => false,
         "temporal_score_effect" => "none",

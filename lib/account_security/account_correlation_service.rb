@@ -138,7 +138,9 @@ module ::AccountSecurity
         shared_networks = Array(precomputed_supplemental["shared_networks"]).map(&:to_s).uniq
         signature = {
           count: precomputed_supplemental["shared_session_signature_count"].to_i,
+          client_count: precomputed_supplemental["shared_session_client_signature_count"].to_i,
           repeated_count: precomputed_supplemental["repeated_shared_session_signature_count"].to_i,
+          repeated_client_count: precomputed_supplemental["repeated_shared_session_client_signature_count"].to_i,
           paired_observations: precomputed_supplemental["shared_session_signature_paired_observations"].to_i,
           span_days: precomputed_supplemental["shared_session_signature_span_days"].to_i,
         }
@@ -149,7 +151,12 @@ module ::AccountSecurity
           paired_observations: precomputed_supplemental["browser_continuity_paired_observations"].to_i,
           span_days: precomputed_supplemental["browser_continuity_span_days"].to_i,
         }
-        max_network_users = precomputed_supplemental["max_shared_network_users"].to_i
+        network_user_counts =
+          Hash(precomputed_supplemental["shared_network_user_counts"]).each_with_object({}) do |(network_key, count), memo|
+            key = network_key.to_s
+            memo[key] = count.to_i if key.present?
+          end
+        max_network_users = [precomputed_supplemental["max_shared_network_users"].to_i, network_user_counts.values.max.to_i].max
         core_auth_history_complete =
           !precomputed_supplemental.key?("core_auth_history_complete") ||
             precomputed_supplemental["core_auth_history_complete"] == true
@@ -161,7 +168,8 @@ module ::AccountSecurity
         shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
         signature = shared_session_signature_summary(user_a.id, user_b.id, shared_networks)
         browser = BrowserContinuityRecorder.shared_summary(user_a.id, user_b.id)
-        max_network_users = shared_networks.map { |network| distinct_users_on_network(network) }.max.to_i
+        network_user_counts = shared_networks.index_with { |network| distinct_users_on_network(network) }
+        max_network_users = network_user_counts.values.max.to_i
         core_auth_history_complete = true
         exact_ip_population_complete = true
         temporal = TemporalCorrelationEvidence.for_pair(
@@ -183,6 +191,27 @@ module ::AccountSecurity
 
       exact_counts = exact_details.map { |detail| detail["user_count"].to_i }
       registration_delta = ((user_a.created_at - user_b.created_at).abs / 60).round
+
+      exact_network_keys = exact_details.filter_map do |detail|
+        IpNormalizer.familiarity_network(detail["ip_address"])
+      end.to_set
+      independent_shared_networks = shared_networks.reject { |network| exact_network_keys.include?(network.to_s) }
+      overlapping_shared_networks = shared_networks.select { |network| exact_network_keys.include?(network.to_s) }
+      max_independent_shared_network_users = independent_shared_networks.map do |network|
+        network_user_counts[network.to_s].to_i
+      end.max.to_i
+
+      # SessionSignature and historical auth-signature evidence are both based
+      # on the same site-local HMAC of the normalized user agent. Keep the v2
+      # fields untouched, but expose a conservative v3-ready group count using
+      # the maximum rather than summing both sources. This prevents the same
+      # client characteristic from being rewarded twice without persisting or
+      # exposing the signature hashes themselves.
+      session_client_signature_count = signature[:client_count].to_i
+      auth_client_signature_count = temporal["shared_auth_client_signature_count"].to_i
+      repeated_session_client_signature_count = signature[:repeated_client_count].to_i
+      repeated_auth_client_signature_count = temporal["repeated_shared_auth_client_signature_count"].to_i
+      client_signature_source_count = [session_client_signature_count, auth_client_signature_count].count(&:positive?)
 
       {
         "scoring_version" => AccountCorrelationPolicy::SCORING_VERSION,
@@ -207,10 +236,23 @@ module ::AccountSecurity
         "mobile_shared_ip_count" => exact_details.count { |detail| detail["mobile"] == true },
         "local_blacklist_shared_ip_count" => exact_details.count { |detail| detail["local_blacklist"] == true },
         "shared_ip_details" => exact_details.first(MAX_SHARED_IPS_IN_PAYLOAD),
+        # Keep the v2 shared-network fields unchanged. The independent fields
+        # give scoring v3 a deduplicated network signal so an IPv4 /32 (or an
+        # IPv6 familiarity network containing an already shared exact IP) is
+        # not rewarded twice.
         "shared_network_count" => shared_networks.length,
         "shared_networks" => shared_networks.first(MAX_SHARED_NETWORKS_IN_PAYLOAD),
+        "shared_independent_network_count" => independent_shared_networks.length,
+        "shared_exact_ip_network_overlap_count" => overlapping_shared_networks.length,
+        "shared_independent_networks" => independent_shared_networks.first(MAX_SHARED_NETWORKS_IN_PAYLOAD),
+        "max_independent_shared_network_users" => max_independent_shared_network_users,
         "shared_session_signature_count" => signature[:count].to_i,
+        "shared_session_client_signature_count" => session_client_signature_count,
         "repeated_shared_session_signature_count" => signature[:repeated_count].to_i,
+        "repeated_shared_session_client_signature_count" => repeated_session_client_signature_count,
+        "client_signature_group_count" => [session_client_signature_count, auth_client_signature_count].max,
+        "repeated_client_signature_group_count" => [repeated_session_client_signature_count, repeated_auth_client_signature_count].max,
+        "client_signature_evidence_source_count" => client_signature_source_count,
         "shared_session_signature_paired_observations" => signature[:paired_observations].to_i,
         "shared_session_signature_span_days" => signature[:span_days].to_i,
         "browser_continuity_count" => browser[:count].to_i,
@@ -233,23 +275,39 @@ module ::AccountSecurity
       TemporalCorrelationEvidence.empty_evidence.merge(value.slice(
         "temporal_evidence_version",
         "temporal_auth_history_complete",
+        "temporal_ip_population_complete",
+        "temporal_population_window_basis",
         "timed_shared_ip_count",
         "temporal_within_15m_count",
         "temporal_within_1h_count",
+        "temporal_within_6h_count",
         "temporal_within_24h_count",
+        "temporal_within_72h_count",
         "temporal_within_7d_count",
         "temporal_public_within_24h_count",
+        "temporal_public_within_7d_count",
         "temporal_repeated_public_alignment",
         "closest_shared_ip_gap_seconds",
+        "max_temporal_ip_users_24h",
+        "max_temporal_ip_users_7d",
+        "max_temporal_ip_users_30d",
         "temporal_ip_details",
         "temporal_ip_details_truncated",
         "temporal_score_effect",
         "auth_pattern_evidence_version",
         "auth_pattern_history_complete",
+        "auth_proximity_closest_gap_seconds",
         "auth_proximity_within_5m_count",
         "auth_proximity_within_30m_count",
+        "auth_proximity_within_1h_count",
+        "auth_proximity_within_6h_count",
+        "auth_proximity_within_24h_count",
+        "auth_proximity_within_72h_count",
+        "auth_proximity_within_7d_count",
         "auth_proximity_same_client_within_30m_count",
         "auth_proximity_public_ip_count",
+        "auth_proximity_public_ip_within_24h_count",
+        "auth_proximity_public_ip_within_7d_count",
         "auth_proximity_details",
         "auth_proximity_details_truncated",
         "shared_auth_client_signature_count",
@@ -259,9 +317,21 @@ module ::AccountSecurity
         "auth_client_signature_population_complete",
         "public_ip_transition_match_count",
         "public_ip_transition_pattern_count",
+        "public_ip_transition_closest_gap_seconds",
+        "aligned_public_ip_transition_1h_count",
+        "aligned_public_ip_transition_6h_count",
         "aligned_public_ip_transition_24h_count",
+        "aligned_public_ip_transition_3d_count",
         "aligned_public_ip_transition_7d_count",
+        "aligned_public_ip_transition_30d_count",
+        "aligned_public_ip_transition_90d_count",
+        "aligned_public_ip_transition_180d_count",
+        "public_ip_transition_beyond_180d_count",
         "public_ip_transition_unaligned_count",
+        "public_ip_transition_population_complete",
+        "max_public_ip_transition_users",
+        "max_public_ip_transition_users_24h",
+        "max_public_ip_transition_users_7d",
         "public_ip_transition_details",
         "public_ip_transition_details_truncated",
         "auth_pattern_score_effect",
@@ -278,7 +348,7 @@ module ::AccountSecurity
     end
 
     def shared_session_signature_summary(user_a_id, user_b_id, allowed_networks)
-      empty = { count: 0, repeated_count: 0, paired_observations: 0, span_days: 0 }
+      empty = { count: 0, client_count: 0, repeated_count: 0, repeated_client_count: 0, paired_observations: 0, span_days: 0 }
       return empty if allowed_networks.blank?
 
       cutoff = SessionSignatureRecorder.retention_cutoff
@@ -300,6 +370,7 @@ module ::AccountSecurity
       return empty if shared.empty?
 
       repeated_count = 0
+      repeated_client_signatures = Set.new
       paired_observations = 0
       max_span_seconds = 0
       shared.each do |key|
@@ -307,7 +378,10 @@ module ::AccountSecurity
         row_b = rows_b[key]
         observations_a = row_a[4].to_i
         observations_b = row_b[4].to_i
-        repeated_count += 1 if observations_a >= 2 && observations_b >= 2
+        if observations_a >= 2 && observations_b >= 2
+          repeated_count += 1
+          repeated_client_signatures << key[1].to_s
+        end
         paired_observations += [observations_a, observations_b].min
 
         starts = [row_a[2], row_b[2]].compact
@@ -319,12 +393,14 @@ module ::AccountSecurity
 
       {
         count: shared.length,
+        client_count: shared.map { |network, signature| signature.to_s }.uniq.length,
         repeated_count: repeated_count,
+        repeated_client_count: repeated_client_signatures.length,
         paired_observations: paired_observations,
         span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
       }
     rescue ActiveRecord::StatementInvalid
-      empty || { count: 0, repeated_count: 0, paired_observations: 0, span_days: 0 }
+      empty || { count: 0, client_count: 0, repeated_count: 0, repeated_client_count: 0, paired_observations: 0, span_days: 0 }
     end
 
     def distinct_users_on_network(network)

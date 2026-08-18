@@ -392,6 +392,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       temporal_closest_gap_display: this.temporalGapLabel(
         evidence.closest_shared_ip_gap_seconds
       ),
+      auth_proximity_closest_gap_display: this.temporalGapLabel(
+        evidence.auth_proximity_closest_gap_seconds
+      ),
+      public_ip_transition_closest_gap_display: this.temporalGapLabel(
+        evidence.public_ip_transition_closest_gap_seconds
+      ),
       has_temporal_evidence: Number(evidence.timed_shared_ip_count || 0) > 0,
       auth_proximity_details: (evidence.auth_proximity_details || []).map(
         (detail) => this.decorateAuthProximityDetail(detail)
@@ -400,7 +406,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         evidence.public_ip_transition_details || []
       ).map((detail) => this.decorateTransitionDetail(detail)),
       has_auth_pattern_evidence:
-        Number(evidence.auth_proximity_within_30m_count || 0) > 0 ||
+        Number(evidence.auth_proximity_within_7d_count || 0) > 0 ||
         Number(evidence.shared_auth_client_signature_count || 0) > 0 ||
         Number(evidence.public_ip_transition_pattern_count || 0) > 0 ||
         Number(evidence.repeated_browser_continuity_count || 0) > 0 ||

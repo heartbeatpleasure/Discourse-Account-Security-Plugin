@@ -114,9 +114,12 @@ RSpec.describe AccountSecurity::AccountGroupBuilder do
     evidence = public_ip_evidence("8.8.8.8").merge(
       "repeated_shared_session_signature_count" => 1,
       "repeated_browser_continuity_count" => 1,
-      "auth_proximity_within_30m_count" => 2,
+      "auth_proximity_within_30m_count" => 0,
+      "auth_proximity_within_7d_count" => 2,
       "auth_proximity_same_client_within_30m_count" => 1,
-      "aligned_public_ip_transition_7d_count" => 1,
+      "aligned_public_ip_transition_7d_count" => 0,
+      "aligned_public_ip_transition_30d_count" => 1,
+      "public_ip_transition_pattern_count" => 1,
     )
     create_correlation(user_a, user_b, evidence: evidence)
     create_correlation(user_b, user_c, evidence: public_ip_evidence("1.1.1.1"))
