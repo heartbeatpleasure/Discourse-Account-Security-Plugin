@@ -210,6 +210,16 @@ module ::AccountSecurity
       page = [page, max_page].min
       items = scope.offset((page - 1) * per_page).limit(per_page).to_a
       review_history = CorrelationInvestigationService.history_for(items.map(&:id))
+      group_index = AccountGroupBuilder.build_index
+      serialized_items = items.map do |item|
+        serialize_correlation(item, review_history: review_history[item.id]).merge(
+          account_group_key: group_index[:pair_to_group][item.id],
+        )
+      end
+      relevant_group_keys = serialized_items.filter_map { |item| item[:account_group_key] }.uniq
+      relevant_groups = relevant_group_keys.filter_map { |key| group_index[:groups_by_key][key] }
+      group_user_ids = relevant_groups.flat_map { |group| group[:user_ids] }.uniq
+      group_users = User.where(id: group_user_ids).index_by(&:id)
 
       render_json_dump(
         enabled: SiteSetting.account_security_account_correlation_enabled,
@@ -222,7 +232,9 @@ module ::AccountSecurity
         temporal_refresh_required: temporal_refresh_required,
         scan: serialize_correlation_scan(AccountCorrelationScanner.status),
         schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
-        items: items.map { |item| serialize_correlation(item, review_history: review_history[item.id]) },
+        account_groups: relevant_groups.map { |group| serialize_account_group(group, group_users) },
+        account_groups_truncated: group_index[:source_pair_limit_reached] == true,
+        items: serialized_items,
       )
     end
 
@@ -516,6 +528,58 @@ module ::AccountSecurity
         network_key: record.network_key,
         expires_at: record.expires_at&.iso8601,
         active: record.expires_at.present? && record.expires_at > Time.zone.now,
+      }
+    end
+
+    def serialize_account_group(group, users_by_id)
+      anchors = Array(group[:anchors]).first(AccountGroupBuilder::MAX_ANCHORS).filter_map do |anchor|
+        ip = IpNormalizer.normalize(anchor[:ip_address])
+        next if ip.blank?
+
+        context = NetworkContext.for_ip(ip, locale: I18n.locale)
+        {
+          ip_address: ip,
+          account_count: anchor[:account_count].to_i,
+          pair_count: anchor[:pair_count].to_i,
+          public: anchor[:public] == true,
+          trusted: anchor[:trusted] == true,
+          tor: anchor[:tor] == true,
+          hosting: anchor[:hosting] == true,
+          mobile: anchor[:mobile] == true,
+          network_context: serialize_network_context(context),
+        }
+      end
+
+      {
+        key: group[:key],
+        account_count: group[:account_count].to_i,
+        relation_count: group[:relation_count].to_i,
+        active_relation_count: group[:active_relation_count].to_i,
+        pair_record_count: group[:pair_record_count].to_i,
+        possible_relation_count: group[:possible_relation_count].to_i,
+        coverage_percent: group[:coverage_percent].to_i.clamp(0, 100),
+        min_score: group[:min_score].to_i.clamp(0, 100),
+        max_score: group[:max_score].to_i.clamp(0, 100),
+        strongest_confidence: AccountCorrelation::CONFIDENCES.include?(group[:strongest_confidence]) ? group[:strongest_confidence] : "weak",
+        status_counts: AccountCorrelation::STATUSES.index_with { |status| group.dig(:status_counts, status).to_i },
+        evidence_counts: {
+          public_ip_pairs: group.dig(:evidence_counts, :public_ip_pairs).to_i,
+          registration_ip_pairs: group.dig(:evidence_counts, :registration_ip_pairs).to_i,
+          authentication_ip_pairs: group.dig(:evidence_counts, :authentication_ip_pairs).to_i,
+          browser_continuity_pairs: group.dig(:evidence_counts, :browser_continuity_pairs).to_i,
+          session_signature_pairs: group.dig(:evidence_counts, :session_signature_pairs).to_i,
+          temporal_24h_pairs: group.dig(:evidence_counts, :temporal_24h_pairs).to_i,
+        },
+        shared_anchor_count: group[:shared_anchor_count].to_i,
+        anchors: anchors,
+        accounts: Array(group[:user_ids]).filter_map do |user_id|
+          user = users_by_id[user_id.to_i]
+          next if user.blank?
+
+          serialize_correlation_user(user).merge(
+            direct_relation_count: group.dig(:account_degrees, user.id).to_i,
+          )
+        end,
       }
     end
 

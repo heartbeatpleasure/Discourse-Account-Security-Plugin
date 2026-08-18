@@ -1,7 +1,9 @@
+import { fn } from "@ember/helper";
 import { action } from "@ember/object";
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { on } from "@ember/modifier";
+import { eq } from "discourse/truth-helpers";
 import dIcon from "discourse/ui-kit/helpers/d-icon";
 import { i18n } from "discourse-i18n";
 
@@ -61,8 +63,8 @@ export default class AccountSecurityCorrelationPair extends Component {
   }
 
   @action
-  setStatus(event) {
-    this.selectedStatus = event.target.value;
+  selectStatus(status) {
+    this.selectedStatus = status;
     if (this.selectedStatus !== "confirmed_duplicate") {
       this.primaryUserId = "";
     }
@@ -277,25 +279,26 @@ export default class AccountSecurityCorrelationPair extends Component {
           </div>
 
           <div class="as-correlation__review-form">
-            <label class="as-correlation__field">
-              <span>{{i18n "admin.account_security.correlations.review_status"}}</span>
-              <select value={{this.selectedStatus}} {{on "change" this.setStatus}}>
-                <option value="open">{{i18n "admin.account_security.correlations.statuses.open"}}</option>
-                <option value="monitor">{{i18n "admin.account_security.correlations.statuses.monitor"}}</option>
-                <option value="expected_shared_network">{{i18n "admin.account_security.correlations.statuses.expected_shared_network"}}</option>
-                <option value="confirmed_duplicate">{{i18n "admin.account_security.correlations.statuses.confirmed_duplicate"}}</option>
-                <option value="dismissed">{{i18n "admin.account_security.correlations.statuses.dismissed"}}</option>
-              </select>
-            </label>
+            <div class="as-correlation__review-decision">
+              <div class="as-correlation__field-label">{{i18n "admin.account_security.correlations.review_status"}}</div>
+              <div class="as-correlation__decision-actions" role="group" aria-label={{i18n "admin.account_security.correlations.review_status"}}>
+                <button class="btn {{if (eq this.selectedStatus "open") "as-correlation__decision-button--selected" ""}}" type="button" aria-pressed={{eq this.selectedStatus "open"}} {{on "click" (fn this.selectStatus "open")}}>{{i18n "admin.account_security.correlations.status_actions.open"}}</button>
+                <button class="btn {{if (eq this.selectedStatus "monitor") "as-correlation__decision-button--selected" ""}}" type="button" aria-pressed={{eq this.selectedStatus "monitor"}} {{on "click" (fn this.selectStatus "monitor")}}>{{i18n "admin.account_security.correlations.status_actions.monitor"}}</button>
+                <button class="btn {{if (eq this.selectedStatus "expected_shared_network") "as-correlation__decision-button--selected" ""}}" type="button" aria-pressed={{eq this.selectedStatus "expected_shared_network"}} {{on "click" (fn this.selectStatus "expected_shared_network")}}>{{i18n "admin.account_security.correlations.status_actions.expected_shared_network"}}</button>
+                <button class="btn btn-danger {{if (eq this.selectedStatus "confirmed_duplicate") "as-correlation__decision-button--selected-danger" ""}}" type="button" aria-pressed={{eq this.selectedStatus "confirmed_duplicate"}} {{on "click" (fn this.selectStatus "confirmed_duplicate")}}>{{i18n "admin.account_security.correlations.status_actions.confirmed_duplicate"}}</button>
+                <button class="btn {{if (eq this.selectedStatus "dismissed") "as-correlation__decision-button--selected" ""}}" type="button" aria-pressed={{eq this.selectedStatus "dismissed"}} {{on "click" (fn this.selectStatus "dismissed")}}>{{i18n "admin.account_security.correlations.status_actions.dismissed"}}</button>
+              </div>
+            </div>
 
             {{#if this.isConfirmedDuplicate}}
-              <label class="as-correlation__field">
+              <label class="as-correlation__field as-correlation__field--keep">
                 <span>{{i18n "admin.account_security.correlations.account_to_keep"}}</span>
                 <select value={{this.primaryUserId}} {{on "change" this.setPrimaryUser}}>
                   <option value="">{{i18n "admin.account_security.correlations.not_selected"}}</option>
                   {{#if @item.user_a}}<option value={{@item.user_a.id}}>{{@item.user_a.username}}</option>{{/if}}
                   {{#if @item.user_b}}<option value={{@item.user_b.id}}>{{@item.user_b.username}}</option>{{/if}}
                 </select>
+                <span class="as-correlation__field-hint">{{i18n "admin.account_security.correlations.account_to_keep_hint"}}</span>
               </label>
             {{/if}}
 
@@ -303,7 +306,7 @@ export default class AccountSecurityCorrelationPair extends Component {
               <span>{{i18n "admin.account_security.correlations.review_note"}}</span>
               <textarea
                 maxlength="1000"
-                rows="3"
+                rows="5"
                 value={{this.reviewNote}}
                 placeholder={{i18n "admin.account_security.correlations.review_note_placeholder"}}
                 {{on "input" this.setReviewNote}}
@@ -311,7 +314,8 @@ export default class AccountSecurityCorrelationPair extends Component {
               <span class="as-correlation__field-hint">{{if this.noteRequired (i18n "admin.account_security.correlations.review_note_required_hint") (i18n "admin.account_security.correlations.review_note_optional_hint")}}</span>
             </label>
 
-            <div class="as-correlation__review-save">
+            <div class="as-correlation__review-footer">
+              <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.review_save_hint"}}</span>
               <button class="btn btn-primary" type="button" disabled={{this.saveDisabled}} {{on "click" this.saveReview}}>{{i18n "admin.account_security.correlations.save_review"}}</button>
             </div>
           </div>

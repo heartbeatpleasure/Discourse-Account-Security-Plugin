@@ -1,3 +1,4 @@
+import { fn } from "@ember/helper";
 import { on } from "@ember/modifier";
 import RouteTemplate from "ember-route-template";
 import AccountSecurityCorrelationPair from "../../components/account-security-correlation-pair";
@@ -199,9 +200,9 @@ export default RouteTemplate(
         background: var(--as-surface-alt);
         overflow: hidden;
       }
-      .as-correlation__group-summary,
-      .as-correlation__candidate-summary-line {
-        display: flex;
+      .as-correlation .as-correlation__group > .as-correlation__group-summary,
+      .as-correlation .as-correlation__candidate > .as-correlation__candidate-summary-line {
+        display: flex !important;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
@@ -209,10 +210,28 @@ export default RouteTemplate(
         cursor: pointer;
         list-style: none;
       }
-      .as-correlation__group-summary::marker,
-      .as-correlation__candidate-summary-line::marker { content: ""; }
-      .as-correlation__group-summary::-webkit-details-marker,
-      .as-correlation__candidate-summary-line::-webkit-details-marker { display: none; }
+      details.as-correlation__group > summary.as-correlation__group-summary::before,
+      details.as-correlation__candidate > summary.as-correlation__candidate-summary-line::before {
+        content: "" !important;
+        display: none !important;
+        width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      details.as-correlation__group > summary.as-correlation__group-summary::marker,
+      details.as-correlation__candidate > summary.as-correlation__candidate-summary-line::marker {
+        content: "" !important;
+        font-size: 0 !important;
+      }
+      details.as-correlation__group > summary.as-correlation__group-summary::-webkit-details-marker,
+      details.as-correlation__candidate > summary.as-correlation__candidate-summary-line::-webkit-details-marker {
+        display: none !important;
+      }
+      .as-correlation__group-summary,
+      .as-correlation__candidate-summary-line {
+        appearance: none;
+        -webkit-appearance: none;
+      }
       .as-correlation__disclosure-icon {
         display: inline-flex;
         width: 1.9rem;
@@ -224,7 +243,7 @@ export default RouteTemplate(
         border-radius: 999px;
         background: var(--secondary);
         color: var(--as-muted);
-        margin-left: .25rem;
+        margin-left: auto;
         transition: transform .15s ease, background .15s ease, color .15s ease;
       }
       .as-correlation__disclosure-icon .d-icon {
@@ -305,6 +324,75 @@ export default RouteTemplate(
         margin-top: .25rem;
         font-size: var(--font-down-1);
         overflow-wrap: anywhere;
+      }
+      .as-correlation__account-groups-intro {
+        display: grid;
+        gap: .25rem;
+        margin-bottom: .85rem;
+      }
+      .as-correlation__account-group-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: .6rem;
+        margin-top: .8rem;
+      }
+      .as-correlation__account-group-evidence,
+      .as-correlation__account-group-review {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .45rem;
+        margin-top: .75rem;
+      }
+      .as-correlation__account-group-anchor-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .6rem;
+        margin-top: .7rem;
+      }
+      .as-correlation__account-group-anchor {
+        min-width: 0;
+        padding: .7rem .8rem;
+        border: 1px solid var(--as-border);
+        border-radius: 11px;
+        background: var(--secondary);
+      }
+      .as-correlation__account-group-anchor-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .3rem .7rem;
+        margin-top: .35rem;
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+      }
+      .as-correlation__compact-pair-list {
+        display: grid;
+        gap: .45rem;
+        margin-top: .65rem;
+      }
+      .as-correlation__compact-pair {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        min-width: 0;
+        padding: .6rem .7rem;
+        border: 1px solid var(--as-border);
+        border-radius: 10px;
+        background: var(--secondary);
+      }
+      .as-correlation__compact-pair-main {
+        display: flex;
+        min-width: 0;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .35rem;
+        font-weight: 700;
+      }
+      .as-correlation__compact-pair-actions {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: .35rem;
       }
       .as-correlation__badges {
         display: flex;
@@ -483,41 +571,94 @@ export default RouteTemplate(
       }
       .as-correlation__review-form {
         display: grid;
-        grid-template-columns: minmax(180px, .75fr) minmax(180px, .75fr) minmax(300px, 1.5fr) auto;
-        align-items: end;
-        gap: .75rem;
+        grid-template-columns: minmax(0, 1fr);
+        gap: .9rem;
         margin-top: .8rem;
-        padding: .85rem;
+        padding: 1rem;
         border: 1px solid var(--as-border);
-        border-radius: 12px;
+        border-radius: 14px;
         background: var(--secondary);
       }
+      .as-correlation__review-decision,
       .as-correlation__review-form .as-correlation__field {
         min-width: 0;
+      }
+      .as-correlation__field-label,
+      .as-correlation__review-form .as-correlation__field > span:first-child {
+        display: block;
+        margin-bottom: .4rem;
+        font-weight: 700;
+      }
+      .as-correlation__decision-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .45rem;
+      }
+      .as-correlation__decision-actions .btn {
+        min-height: 2.4rem;
+        padding-inline: .85rem;
+        white-space: nowrap;
+      }
+      .as-correlation__decision-button--selected {
+        border-color: var(--tertiary);
+        background: var(--tertiary);
+        color: var(--secondary);
+      }
+      .as-correlation__decision-button--selected:hover,
+      .as-correlation__decision-button--selected:focus {
+        color: var(--secondary);
+      }
+      .as-correlation__decision-button--selected-danger {
+        border-color: var(--danger);
+        background: var(--danger);
+        color: var(--secondary);
+        box-shadow: 0 0 0 2px var(--danger-low-mid);
       }
       .as-correlation__review-form select,
       .as-correlation__review-form textarea {
         width: 100%;
         box-sizing: border-box;
         margin: 0;
+        border: 1px solid var(--as-border);
+        border-radius: 10px;
+        background: var(--as-surface);
       }
-      .as-correlation__review-form textarea {
-        min-height: 5.4rem;
-        resize: vertical;
+      .as-correlation__field--keep {
+        width: min(28rem, 100%);
       }
       .as-correlation__field--note {
-        grid-column: span 1;
+        width: 100%;
+      }
+      .as-correlation__review-form textarea {
+        min-height: 9.5rem;
+        padding: .75rem .8rem;
+        resize: vertical;
+        line-height: 1.45;
+      }
+      .as-correlation__review-form select {
+        min-height: 42px;
       }
       .as-correlation__field-hint {
+        display: block;
+        margin-top: .4rem;
+        max-width: 70rem;
         color: var(--as-muted);
         font-size: var(--font-down-2);
-        line-height: 1.35;
+        line-height: 1.45;
       }
-      .as-correlation__review-save {
+      .as-correlation__review-footer {
         display: flex;
-        align-items: flex-end;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-top: .8rem;
+        border-top: 1px solid var(--as-border);
       }
-      .as-correlation__review-save .btn { white-space: nowrap; }
+      .as-correlation__review-footer .btn {
+        flex: 0 0 auto;
+        min-width: 8.5rem;
+        white-space: nowrap;
+      }
       .as-correlation__history {
         margin-top: .9rem;
       }
@@ -573,10 +714,7 @@ export default RouteTemplate(
         .as-correlation__diagnostics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       }
       @media (max-width: 1100px) {
-        .as-correlation__review-form {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-        .as-correlation__review-save { align-self: end; }
+        .as-correlation__account-group-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
       @media (max-width: 900px) {
         .as-correlation__compact-grid,
@@ -585,6 +723,7 @@ export default RouteTemplate(
         .as-correlation__candidate-meta { grid-template-columns: 1fr; }
         .as-correlation__investigation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__group-accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-correlation__account-group-anchor-list { grid-template-columns: 1fr; }
         .as-correlation__temporal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__temporal-list { grid-template-columns: 1fr; }
       }
@@ -597,10 +736,13 @@ export default RouteTemplate(
         .as-correlation__schedule-summary,
         .as-correlation__filters,
         .as-correlation__accounts-grid,
-        .as-correlation__review-form,
-        .as-correlation__investigation-summary { grid-template-columns: 1fr; }
+        .as-correlation__investigation-summary,
+        .as-correlation__account-group-metrics { grid-template-columns: 1fr; }
+        .as-correlation__review-footer { flex-direction: column; align-items: stretch; }
+        .as-correlation__review-footer .btn { align-self: flex-start; }
         .as-correlation__group-summary,
         .as-correlation__candidate-summary-line { align-items: flex-start; }
+        .as-correlation__compact-pair { align-items: flex-start; flex-direction: column; }
         .as-correlation__group-accounts,
         .as-correlation__infrastructure-grid { grid-template-columns: 1fr; }
         .as-correlation__temporal-summary,
@@ -750,6 +892,110 @@ export default RouteTemplate(
       </section>
 
       {{#if @controller.data.items.length}}
+        {{#if @controller.data.account_groups.length}}
+          <section class="as-correlation__panel">
+            <div class="as-correlation__account-groups-intro">
+              <h2>{{i18n "admin.account_security.correlations.account_groups_title"}}</h2>
+              <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.account_groups_description"}}</p>
+            </div>
+            {{#if @controller.data.account_groups_truncated}}
+              <div class="as-correlation__notice" style="margin-bottom: .85rem;">{{i18n "admin.account_security.correlations.account_groups_truncated"}}</div>
+            {{/if}}
+            <div class="as-correlation__group-list">
+              {{#each @controller.data.account_groups as |group|}}
+                <details class="as-correlation__group as-correlation__account-group">
+                  <summary class="as-correlation__group-summary">
+                    <div class="as-correlation__summary-main">
+                      <div class="as-correlation__summary-title">
+                        <strong>{{group.account_count_label}}</strong>
+                        <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.account_group_label"}}</span>
+                      </div>
+                      <span class="as-correlation__muted">{{group.relationship_label}}</span>
+                    </div>
+                    <div class="as-correlation__badges">
+                      <span class="as-correlation__badge">{{i18n "admin.account_security.correlations.strongest_pair"}}: {{group.strongest_confidence_label}}</span>
+                      <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score_range"}} {{group.score_range_label}}</span>
+                    </div>
+                    <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
+                  </summary>
+                  <div class="as-correlation__group-body">
+                    <p class="as-correlation__muted" style="margin-top: .8rem;">{{i18n "admin.account_security.correlations.account_group_explanation"}}</p>
+
+                    <div class="as-correlation__account-group-metrics">
+                      <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.direct_relationships"}}</div><div class="as-correlation__value">{{group.relation_count}} / {{group.possible_relation_count}}</div></div>
+                      <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.relationship_coverage"}}</div><div class="as-correlation__value">{{group.coverage_percent}}%</div></div>
+                      <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.score_range"}}</div><div class="as-correlation__value">{{group.score_range_label}}</div></div>
+                      <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.strongest_pair"}}</div><div class="as-correlation__value">{{group.strongest_confidence_label}}</div></div>
+                    </div>
+
+                    <div class="as-correlation__evidence-title">
+                      <h3>{{i18n "admin.account_security.correlations.account_group_accounts"}}</h3>
+                      <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.account_group_accounts_description"}}</p>
+                    </div>
+                    <div class="as-correlation__group-accounts">
+                      {{#each group.accounts as |account|}}
+                        <div class="as-correlation__group-account">
+                          <a class="trigger-user-card as-correlation__user-link" data-user-card={{account.username}} href={{account.profile_url}}>{{account.username}}</a>
+                          <div class="as-correlation__muted">{{i18n "admin.account_security.correlations.direct_relationship_count" count=account.direct_relation_count}}</div>
+                        </div>
+                      {{/each}}
+                    </div>
+
+                    {{#if group.evidence_summary.length}}
+                      <div class="as-correlation__account-group-evidence">
+                        {{#each group.evidence_summary as |summary|}}<span class="as-correlation__badge">{{summary}}</span>{{/each}}
+                      </div>
+                    {{/if}}
+
+                    {{#if group.anchors.length}}
+                      <div class="as-correlation__evidence-title">
+                        <h3>{{i18n "admin.account_security.correlations.account_group_anchors"}}</h3>
+                        <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.account_group_anchors_description"}}</p>
+                      </div>
+                      <div class="as-correlation__account-group-anchor-list">
+                        {{#each group.anchors as |anchor|}}
+                          <div class="as-correlation__account-group-anchor">
+                            <div class="as-correlation__ip-address">{{anchor.ip_address}}</div>
+                            <div class="as-correlation__account-group-anchor-meta">
+                              <span>{{anchor.account_count_label}}</span>
+                              <span>{{anchor.context_display}}</span>
+                              {{#if anchor.network_context.network_display}}<span>{{anchor.network_context.network_display}}</span>{{/if}}
+                              {{#if anchor.network_context.location_display}}<span>{{anchor.network_context.location_display}}</span>{{/if}}
+                            </div>
+                          </div>
+                        {{/each}}
+                      </div>
+                    {{/if}}
+
+                    {{#if group.review_summary.length}}
+                      <div class="as-correlation__evidence-title">
+                        <h3>{{i18n "admin.account_security.correlations.account_group_review_progress"}}</h3>
+                      </div>
+                      <div class="as-correlation__account-group-review">
+                        {{#each group.review_summary as |review|}}<span class="as-correlation__badge">{{review.label}}: {{review.count}}</span>{{/each}}
+                      </div>
+                    {{/if}}
+
+                    {{#if group.visible_pairs.length}}
+                      <div class="as-correlation__group-pairs">
+                        <div class="as-correlation__group-pairs-header">
+                          <h3>{{i18n "admin.account_security.correlations.account_group_pair_comparisons"}}</h3>
+                          <p class="as-correlation__muted">{{if group.all_pairs_visible (i18n "admin.account_security.correlations.account_group_all_pairs_visible") group.visible_pair_label}}</p>
+                        </div>
+                        <div class="as-correlation__candidate-list">
+                          {{#each group.visible_pairs as |item|}}
+                            <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
+                          {{/each}}
+                        </div>
+                      </div>
+                    {{/if}}
+                  </div>
+                </details>
+              {{/each}}
+            </div>
+          </section>
+        {{/if}}
+
         {{#if @controller.data.shared_ip_groups.length}}
           <section class="as-correlation__panel">
             <div class="as-correlation__copy">
@@ -804,11 +1050,23 @@ export default RouteTemplate(
                       <div class="as-correlation__group-pairs">
                         <div class="as-correlation__group-pairs-header">
                           <h3>{{i18n "admin.account_security.correlations.group_pair_comparisons"}}</h3>
-                          <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.group_pair_comparisons_description"}}</p>
+                          <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.group_pair_comparisons_compact_description"}}</p>
                         </div>
-                        <div class="as-correlation__candidate-list">
+                        <div class="as-correlation__compact-pair-list">
                           {{#each group.pairs as |item|}}
-                            <AccountSecurityCorrelationPair @item={{item}} @controller={{@controller}} />
+                            <div class="as-correlation__compact-pair">
+                              <div class="as-correlation__compact-pair-main">
+                                {{#if item.user_a}}<a class="trigger-user-card as-correlation__user-link" data-user-card={{item.user_a.username}} href={{item.user_a.profile_url}}>{{item.user_a.username}}</a>{{else}}<span>—</span>{{/if}}
+                                <span class="as-correlation__pair-separator">↔</span>
+                                {{#if item.user_b}}<a class="trigger-user-card as-correlation__user-link" data-user-card={{item.user_b.username}} href={{item.user_b.profile_url}}>{{item.user_b.username}}</a>{{else}}<span>—</span>{{/if}}
+                              </div>
+                              <div class="as-correlation__compact-pair-actions">
+                                <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{item.score}}</span>
+                                <span class="as-correlation__badge">{{item.confidence_label}}</span>
+                                <span class="as-correlation__badge">{{item.status_label}}</span>
+                                <button class="btn btn-small" type="button" {{on "click" (fn @controller.focusPair item.id)}}>{{i18n "admin.account_security.correlations.view_pair_details"}}</button>
+                              </div>
+                            </div>
                           {{/each}}
                         </div>
                       </div>
@@ -823,7 +1081,7 @@ export default RouteTemplate(
         {{#if @controller.data.ungrouped_items.length}}
           <section class="as-correlation__panel">
             <div class="as-correlation__copy">
-              <h2>{{if @controller.data.shared_ip_groups.length (i18n "admin.account_security.correlations.other_pair_comparisons_title") (i18n "admin.account_security.correlations.pair_comparisons_title")}}</h2>
+              <h2>{{if @controller.data.account_groups.length (i18n "admin.account_security.correlations.other_pair_comparisons_title") (i18n "admin.account_security.correlations.pair_comparisons_title")}}</h2>
               <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.pair_comparisons_description"}}</p>
             </div>
             <div class="as-correlation__candidate-list">

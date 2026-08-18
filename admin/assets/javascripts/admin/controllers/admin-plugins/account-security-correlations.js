@@ -516,15 +516,153 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       );
   }
 
+  decorateGroupAnchor(anchor) {
+    const networkContext = this.decorateNetworkContext(anchor.network_context);
+    const contexts = [];
+    if (!anchor.public) {
+      contexts.push(i18n("admin.account_security.correlations.context_nonpublic"));
+    }
+    if (anchor.trusted) {
+      contexts.push(i18n("admin.account_security.correlations.context_trusted"));
+    }
+    if (anchor.tor) {
+      contexts.push(i18n("admin.account_security.correlations.context_tor"));
+    }
+    if (anchor.hosting) {
+      contexts.push(i18n("admin.account_security.correlations.context_hosting"));
+    }
+    if (anchor.mobile) {
+      contexts.push(i18n("admin.account_security.correlations.context_mobile"));
+    }
+
+    return {
+      ...anchor,
+      network_context: networkContext,
+      context_display:
+        contexts.join(" · ") ||
+        i18n("admin.account_security.correlations.context_standard"),
+      account_count_label: i18n(
+        "admin.account_security.correlations.group_account_count",
+        { count: Number(anchor.account_count || 0) }
+      ),
+    };
+  }
+
+  decorateAccountGroup(group, items) {
+    const accounts = (group.accounts || []).map((user) => ({
+      ...this.decorateUser(user),
+      direct_relation_count: Number(user.direct_relation_count || 0),
+    }));
+    const visiblePairs = (items || []).filter(
+      (item) => item.account_group_key === group.key
+    );
+    const statusCounts = group.status_counts || {};
+    const evidenceCounts = group.evidence_counts || {};
+    const evidenceSummary = [];
+
+    if (Number(evidenceCounts.public_ip_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_public_ip_pairs", {
+          count: Number(evidenceCounts.public_ip_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.registration_ip_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n(
+          "admin.account_security.correlations.account_group_registration_pairs",
+          { count: Number(evidenceCounts.registration_ip_pairs || 0) }
+        )
+      );
+    }
+    if (Number(evidenceCounts.authentication_ip_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_auth_pairs", {
+          count: Number(evidenceCounts.authentication_ip_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.browser_continuity_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_browser_pairs", {
+          count: Number(evidenceCounts.browser_continuity_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.temporal_24h_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_temporal_pairs", {
+          count: Number(evidenceCounts.temporal_24h_pairs || 0),
+        })
+      );
+    }
+
+    const reviewSummary = [
+      "open",
+      "monitor",
+      "expected_shared_network",
+      "confirmed_duplicate",
+      "dismissed",
+    ]
+      .filter((status) => Number(statusCounts[status] || 0) > 0)
+      .map((status) => ({
+        status,
+        label: i18n(`admin.account_security.correlations.statuses.${status}`),
+        count: Number(statusCounts[status] || 0),
+      }));
+
+    return {
+      ...group,
+      accounts,
+      anchors: (group.anchors || []).map((anchor) =>
+        this.decorateGroupAnchor(anchor)
+      ),
+      visible_pairs: visiblePairs,
+      visible_pair_count: visiblePairs.length,
+      all_pairs_visible:
+        visiblePairs.length >= Number(group.pair_record_count || group.relation_count || 0),
+      strongest_confidence_label: i18n(
+        `admin.account_security.correlations.confidences.${group.strongest_confidence}`
+      ),
+      account_count_label: i18n(
+        "admin.account_security.correlations.group_account_count",
+        { count: Number(group.account_count || 0) }
+      ),
+      relationship_label: i18n(
+        "admin.account_security.correlations.account_group_relationships",
+        {
+          count: Number(group.relation_count || 0),
+          possible: Number(group.possible_relation_count || 0),
+        }
+      ),
+      visible_pair_label: i18n(
+        "admin.account_security.correlations.account_group_pairs_visible",
+        {
+          visible: visiblePairs.length,
+          total: Number(group.pair_record_count || group.relation_count || 0),
+        }
+      ),
+      score_range_label:
+        Number(group.min_score || 0) === Number(group.max_score || 0)
+          ? `${Number(group.max_score || 0)}`
+          : `${Number(group.min_score || 0)}–${Number(group.max_score || 0)}`,
+      evidence_summary: evidenceSummary,
+      review_summary: reviewSummary,
+    };
+  }
+
   decorateData(data) {
     if (!data) {
       return data;
     }
 
     const items = (data.items || []).map((item) => this.decorateItem(item));
+    const accountGroups = (data.account_groups || []).map((group) =>
+      this.decorateAccountGroup(group, items)
+    );
     const sharedIpGroups = this.buildSharedIpGroups(items);
-    const groupedPairIds = new Set(
-      sharedIpGroups.flatMap((group) => group.pairs.map((item) => item.id))
+    const accountGroupedPairIds = new Set(
+      accountGroups.flatMap((group) => group.visible_pairs.map((item) => item.id))
     );
 
     return {
@@ -532,8 +670,11 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       scan: this.decorateScan(data.scan),
       schedule: this.decorateSchedule(data.schedule),
       items,
+      account_groups: accountGroups,
       shared_ip_groups: sharedIpGroups,
-      ungrouped_items: items.filter((item) => !groupedPairIds.has(item.id)),
+      ungrouped_items: items.filter(
+        (item) => !accountGroupedPairIds.has(item.id)
+      ),
     };
   }
 
@@ -629,6 +770,24 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       popupAjaxError(error);
       return false;
     }
+  }
+
+  @action
+  focusPair(pairId) {
+    const element = document.getElementById(`correlation-${pairId}`);
+    if (!element) {
+      return;
+    }
+
+    element.open = true;
+    let parent = element.parentElement;
+    while (parent) {
+      if (parent.tagName === "DETAILS") {
+        parent.open = true;
+      }
+      parent = parent.parentElement;
+    }
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   @action

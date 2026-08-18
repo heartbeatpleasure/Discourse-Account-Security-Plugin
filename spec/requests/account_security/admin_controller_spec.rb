@@ -120,6 +120,63 @@ RSpec.describe AccountSecurity::AdminController do
   end
 
 
+  it "returns derived account groups while keeping pair records individually reviewable" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    third = Fabricate(:user)
+    users = [first, second, third]
+    pair_ids = []
+
+    [[first, second], [first, third], [second, third]].each do |left, right|
+      user_a_id, user_b_id = [left.id, right.id].sort
+      pair_ids << AccountSecurity::AccountCorrelation.create!(
+        user_a_id: user_a_id,
+        user_b_id: user_b_id,
+        score: 50,
+        confidence: "strong",
+        status: "open",
+        evidence: {
+          "shared_exact_ip_count" => 1,
+          "shared_public_ip_count" => 1,
+          "shared_registration_ip" => true,
+          "shared_ip_details" => [
+            {
+              "ip_address" => "8.8.8.8",
+              "public" => true,
+              "sources_a" => ["registration"],
+              "sources_b" => ["registration"],
+            },
+          ],
+        },
+        first_seen_at: Time.zone.now,
+        last_seen_at: Time.zone.now,
+      ).id
+    end
+
+    allow(AccountSecurity::NetworkContext).to receive(:for_ip).and_return(
+      ip_address: "8.8.8.8",
+      public: true,
+      maxmind: {},
+      sources: [],
+    )
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations.json"
+
+    expect(response.status).to eq(200)
+    group = response.parsed_body.fetch("account_groups").first
+    expect(group).to be_present
+    expect(group["account_count"]).to eq(3)
+    expect(group["relation_count"]).to eq(3)
+    expect(group["possible_relation_count"]).to eq(3)
+    expect(group["accounts"].map { |entry| entry["id"] }).to match_array(users.map(&:id))
+    expect(response.parsed_body.fetch("items").map { |entry| entry["id"] }).to include(*pair_ids)
+    expect(response.parsed_body.fetch("items").all? { |entry| entry["account_group_key"] == group["key"] }).to eq(true)
+  end
+
+
   it "serializes local network context without MaxMind coordinates" do
     sign_in(admin)
     allow(AccountSecurity::AssessmentService).to receive(:call).and_return(

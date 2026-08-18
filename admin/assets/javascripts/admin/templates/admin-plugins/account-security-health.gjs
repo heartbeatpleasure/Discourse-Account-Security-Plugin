@@ -233,12 +233,12 @@ export default RouteTemplate(
                 <div class="as-page__value">{{@controller.localNetworkContext.state_label}}</div>
               </div>
               <div class="as-page__item">
-                <div class="as-page__label">GeoLite2 City</div>
+                <div class="as-page__label">MaxMind GeoLite2 City</div>
                 <div class="as-page__value">{{if @controller.localNetworkContext.city.available (i18n "admin.account_security.health.maxmind_available") (i18n "admin.account_security.health.maxmind_unavailable")}}</div>
                 {{#if @controller.localNetworkContext.city_updated_at_display}}<div class="as-page__muted" style="margin-top: .25rem;">{{i18n "admin.account_security.health.maxmind_updated"}}: {{@controller.localNetworkContext.city_updated_at_display}}</div>{{/if}}
               </div>
               <div class="as-page__item">
-                <div class="as-page__label">GeoLite2 ASN</div>
+                <div class="as-page__label">MaxMind GeoLite2 ASN</div>
                 <div class="as-page__value">{{if @controller.localNetworkContext.asn.available (i18n "admin.account_security.health.maxmind_available") (i18n "admin.account_security.health.maxmind_unavailable")}}</div>
                 {{#if @controller.localNetworkContext.asn_updated_at_display}}<div class="as-page__muted" style="margin-top: .25rem;">{{i18n "admin.account_security.health.maxmind_updated"}}: {{@controller.localNetworkContext.asn_updated_at_display}}</div>{{/if}}
               </div>
