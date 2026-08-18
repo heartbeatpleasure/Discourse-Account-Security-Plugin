@@ -13,8 +13,10 @@ module ::AccountSecurity
       @network_users = Hash.new { |hash, network| hash[network] = Set.new }
       @signatures_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
       @signature_users = Hash.new { |hash, key| hash[key] = Set.new }
+      @signature_meta_by_user = Hash.new { |hash, user_id| hash[user_id] = {} }
       @browser_tokens_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
       @browser_token_users = Hash.new { |hash, token| hash[token] = Set.new }
+      @browser_meta_by_user = Hash.new { |hash, user_id| hash[user_id] = {} }
       @trusted_networks = load_trusted_networks
       @diagnostics = {
         supplemental_network_relations: 0,
@@ -55,19 +57,35 @@ module ::AccountSecurity
       shared_networks.reject! { |network| trusted_network?(network) }
       shared_network_set = shared_networks.to_set
 
-      shared_signatures = (@signatures_by_user[user_a_id] & @signatures_by_user[user_b_id]).count do |network, _signature|
+      shared_signature_keys = (@signatures_by_user[user_a_id] & @signatures_by_user[user_b_id]).select do |network, _signature|
         shared_network_set.include?(network)
       end
+      signature_summary = observation_summary(
+        shared_signature_keys,
+        @signature_meta_by_user[user_a_id],
+        @signature_meta_by_user[user_b_id],
+      )
 
       shared_browser_tokens = @browser_tokens_by_user[user_a_id] & @browser_tokens_by_user[user_b_id]
+      browser_summary = observation_summary(
+        shared_browser_tokens,
+        @browser_meta_by_user[user_a_id],
+        @browser_meta_by_user[user_b_id],
+      )
       max_browser_users = shared_browser_tokens.map { |token| @browser_token_users[token].length }.max.to_i
       max_network_users = shared_networks.map { |network| @network_users[network].length }.max.to_i
 
       {
         "shared_networks" => shared_networks.sort,
-        "shared_session_signature_count" => shared_signatures,
+        "shared_session_signature_count" => shared_signature_keys.length,
+        "repeated_shared_session_signature_count" => signature_summary[:repeated_count],
+        "shared_session_signature_paired_observations" => signature_summary[:paired_observations],
+        "shared_session_signature_span_days" => signature_summary[:max_span_days],
         "browser_continuity_count" => shared_browser_tokens.length,
         "max_browser_continuity_users" => max_browser_users,
+        "repeated_browser_continuity_count" => browser_summary[:repeated_count],
+        "browser_continuity_paired_observations" => browser_summary[:paired_observations],
+        "browser_continuity_span_days" => browser_summary[:max_span_days],
         "max_shared_network_users" => max_network_users,
       }
     end
@@ -90,8 +108,8 @@ module ::AccountSecurity
       SessionSignature
         .where(user_id: eligible_user_ids_scope)
         .where("last_seen_at >= ?", @cutoff)
-        .pluck(:user_id, :network_key, :signature_hash)
-        .each do |user_id, network, signature|
+        .pluck(:user_id, :network_key, :signature_hash, :first_seen_at, :last_seen_at, :observation_count)
+        .each do |user_id, network, signature, first_seen_at, last_seen_at, observation_count|
           user_id = user_id.to_i
           network = network.to_s
           signature = signature.to_s
@@ -102,6 +120,11 @@ module ::AccountSecurity
           before = @signatures_by_user[user_id].length
           @signatures_by_user[user_id] << key
           @signature_users[key] << user_id
+          @signature_meta_by_user[user_id][key] = {
+            first_seen_at: first_seen_at,
+            last_seen_at: last_seen_at,
+            observation_count: observation_count.to_i,
+          }
           diagnostics[:supplemental_signature_relations] += 1 if @signatures_by_user[user_id].length > before
         end
     rescue ActiveRecord::StatementInvalid => e
@@ -112,8 +135,8 @@ module ::AccountSecurity
       BrowserContinuity
         .where(user_id: eligible_user_ids_scope)
         .where("last_seen_at >= ?", BrowserContinuityRecorder.retention_cutoff)
-        .pluck(:user_id, :token_hash)
-        .each do |user_id, token_hash|
+        .pluck(:user_id, :token_hash, :first_seen_at, :last_seen_at, :observation_count)
+        .each do |user_id, token_hash, first_seen_at, last_seen_at, observation_count|
           user_id = user_id.to_i
           token_hash = token_hash.to_s
           next if user_id <= 0 || !BrowserContinuityRecorder.valid_hash?(token_hash)
@@ -121,10 +144,44 @@ module ::AccountSecurity
           before = @browser_tokens_by_user[user_id].length
           @browser_tokens_by_user[user_id] << token_hash
           @browser_token_users[token_hash] << user_id
+          @browser_meta_by_user[user_id][token_hash] = {
+            first_seen_at: first_seen_at,
+            last_seen_at: last_seen_at,
+            observation_count: observation_count.to_i,
+          }
           diagnostics[:supplemental_browser_relations] += 1 if @browser_tokens_by_user[user_id].length > before
         end
     rescue ActiveRecord::StatementInvalid => e
       Rails.logger.warn("[account_security] correlation scan browser-continuity preload failed class=#{e.class}")
+    end
+
+
+    def observation_summary(keys, meta_a, meta_b)
+      repeated_count = 0
+      paired_observations = 0
+      max_span_seconds = 0
+
+      Array(keys).each do |key|
+        row_a = meta_a[key] || {}
+        row_b = meta_b[key] || {}
+        observations_a = row_a[:observation_count].to_i
+        observations_b = row_b[:observation_count].to_i
+        repeated_count += 1 if observations_a >= 2 && observations_b >= 2
+        paired_observations += [observations_a, observations_b].min
+
+        starts = [row_a[:first_seen_at], row_b[:first_seen_at]].compact
+        finishes = [row_a[:last_seen_at], row_b[:last_seen_at]].compact
+        if starts.any? && finishes.any?
+          span = (finishes.max - starts.min).to_i
+          max_span_seconds = [max_span_seconds, span].max
+        end
+      end
+
+      {
+        repeated_count: repeated_count,
+        paired_observations: paired_observations,
+        max_span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
+      }
     end
 
     def add_network_relation(user_id, network)

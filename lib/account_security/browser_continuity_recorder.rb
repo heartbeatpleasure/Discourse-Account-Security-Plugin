@@ -82,14 +82,32 @@ module ::AccountSecurity
     end
 
     def shared_summary(user_a_id, user_b_id)
-      return { count: 0, max_users: 0 } unless enabled?
+      empty = {
+        count: 0,
+        max_users: 0,
+        repeated_count: 0,
+        paired_observations: 0,
+        max_span_days: 0,
+      }
+      return empty unless enabled?
 
       cutoff = retention_cutoff
-      a = BrowserContinuity.where(user_id: user_a_id).where("last_seen_at >= ?", cutoff).pluck(:token_hash).to_set
-      return { count: 0, max_users: 0 } if a.empty?
+      rows_a =
+        BrowserContinuity
+          .where(user_id: user_a_id)
+          .where("last_seen_at >= ?", cutoff)
+          .pluck(:token_hash, :first_seen_at, :last_seen_at, :observation_count)
+          .index_by(&:first)
+      return empty if rows_a.empty?
 
-      shared = BrowserContinuity.where(user_id: user_b_id, token_hash: a.to_a).where("last_seen_at >= ?", cutoff).pluck(:token_hash).uniq
-      return { count: 0, max_users: 0 } if shared.empty?
+      rows_b =
+        BrowserContinuity
+          .where(user_id: user_b_id, token_hash: rows_a.keys)
+          .where("last_seen_at >= ?", cutoff)
+          .pluck(:token_hash, :first_seen_at, :last_seen_at, :observation_count)
+          .index_by(&:first)
+      shared = rows_a.keys & rows_b.keys
+      return empty if shared.empty?
 
       max_users =
         BrowserContinuity
@@ -102,9 +120,34 @@ module ::AccountSecurity
           .max
           .to_i
 
-      { count: shared.length, max_users: max_users }
+      repeated_count = 0
+      paired_observations = 0
+      max_span_seconds = 0
+      shared.each do |token_hash|
+        row_a = rows_a[token_hash]
+        row_b = rows_b[token_hash]
+        observations_a = row_a[3].to_i
+        observations_b = row_b[3].to_i
+        repeated_count += 1 if observations_a >= 2 && observations_b >= 2
+        paired_observations += [observations_a, observations_b].min
+
+        starts = [row_a[1], row_b[1]].compact
+        finishes = [row_a[2], row_b[2]].compact
+        if starts.any? && finishes.any?
+          span = (finishes.max - starts.min).to_i
+          max_span_seconds = [max_span_seconds, span].max
+        end
+      end
+
+      {
+        count: shared.length,
+        max_users: max_users,
+        repeated_count: repeated_count,
+        paired_observations: paired_observations,
+        max_span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
+      }
     rescue ActiveRecord::StatementInvalid
-      { count: 0, max_users: 0 }
+      empty || { count: 0, max_users: 0, repeated_count: 0, paired_observations: 0, max_span_days: 0 }
     end
 
     def cookie_lifetime

@@ -235,3 +235,35 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
   end
 
 end
+
+
+RSpec.describe "supplemental authentication-pattern scoring isolation" do
+  it "does not change the score for supplemental authentication-pattern evidence" do
+    base = {
+      "shared_exact_ip_count" => 1,
+      "untrusted_public_ip_count" => 1,
+      "shared_public_ip_count" => 1,
+      "shared_ip_details" => [
+        {
+          "ip_address" => "8.8.8.8",
+          "public" => true,
+          "trusted" => false,
+          "sources_a" => ["auth_session"],
+          "sources_b" => ["auth_session"],
+          "user_count" => 2,
+        },
+      ],
+    }
+    enriched = base.merge(
+      "auth_proximity_within_30m_count" => 5,
+      "auth_proximity_same_client_within_30m_count" => 4,
+      "aligned_public_ip_transition_7d_count" => 2,
+      "repeated_shared_auth_client_signature_count" => 1,
+      "auth_pattern_score_effect" => "none",
+    )
+
+    expect(AccountSecurity::AccountCorrelationPolicy.score(enriched)).to eq(
+      AccountSecurity::AccountCorrelationPolicy.score(base),
+    )
+  end
+end

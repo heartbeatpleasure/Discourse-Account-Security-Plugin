@@ -119,16 +119,24 @@ module ::AccountSecurity
 
       if precomputed_supplemental.is_a?(Hash)
         shared_networks = Array(precomputed_supplemental["shared_networks"]).map(&:to_s).uniq
-        shared_signature_count = precomputed_supplemental["shared_session_signature_count"].to_i
+        signature = {
+          count: precomputed_supplemental["shared_session_signature_count"].to_i,
+          repeated_count: precomputed_supplemental["repeated_shared_session_signature_count"].to_i,
+          paired_observations: precomputed_supplemental["shared_session_signature_paired_observations"].to_i,
+          span_days: precomputed_supplemental["shared_session_signature_span_days"].to_i,
+        }
         browser = {
           count: precomputed_supplemental["browser_continuity_count"].to_i,
           max_users: precomputed_supplemental["max_browser_continuity_users"].to_i,
+          repeated_count: precomputed_supplemental["repeated_browser_continuity_count"].to_i,
+          paired_observations: precomputed_supplemental["browser_continuity_paired_observations"].to_i,
+          span_days: precomputed_supplemental["browser_continuity_span_days"].to_i,
         }
         max_network_users = precomputed_supplemental["max_shared_network_users"].to_i
         temporal = normalize_temporal_evidence(precomputed_supplemental["temporal_evidence"])
       else
         shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
-        shared_signature_count = shared_session_signatures(user_a.id, user_b.id, shared_networks).length
+        signature = shared_session_signature_summary(user_a.id, user_b.id, shared_networks)
         browser = BrowserContinuityRecorder.shared_summary(user_a.id, user_b.id)
         max_network_users = shared_networks.map { |network| distinct_users_on_network(network) }.max.to_i
         temporal = TemporalCorrelationEvidence.for_pair(
@@ -174,9 +182,15 @@ module ::AccountSecurity
         "shared_ip_details" => exact_details.first(MAX_SHARED_IPS_IN_PAYLOAD),
         "shared_network_count" => shared_networks.length,
         "shared_networks" => shared_networks.first(MAX_SHARED_NETWORKS_IN_PAYLOAD),
-        "shared_session_signature_count" => shared_signature_count,
+        "shared_session_signature_count" => signature[:count].to_i,
+        "repeated_shared_session_signature_count" => signature[:repeated_count].to_i,
+        "shared_session_signature_paired_observations" => signature[:paired_observations].to_i,
+        "shared_session_signature_span_days" => signature[:span_days].to_i,
         "browser_continuity_count" => browser[:count].to_i,
         "max_browser_continuity_users" => browser[:max_users].to_i,
+        "repeated_browser_continuity_count" => browser[:repeated_count].to_i,
+        "browser_continuity_paired_observations" => browser[:paired_observations].to_i,
+        "browser_continuity_span_days" => browser[:span_days].to_i,
         "browser_continuity_positive_only" => true,
         "registration_delta_minutes" => registration_delta,
         "max_shared_network_users" => [max_network_users, exact_counts.max.to_i].max,
@@ -202,6 +216,24 @@ module ::AccountSecurity
         "temporal_ip_details",
         "temporal_ip_details_truncated",
         "temporal_score_effect",
+        "auth_pattern_evidence_version",
+        "auth_proximity_within_5m_count",
+        "auth_proximity_within_30m_count",
+        "auth_proximity_same_client_within_30m_count",
+        "auth_proximity_public_ip_count",
+        "auth_proximity_details",
+        "auth_proximity_details_truncated",
+        "shared_auth_client_signature_count",
+        "repeated_shared_auth_client_signature_count",
+        "shared_auth_client_signature_paired_observations",
+        "max_shared_auth_client_signature_users",
+        "auth_client_signature_population_complete",
+        "public_ip_transition_match_count",
+        "aligned_public_ip_transition_24h_count",
+        "aligned_public_ip_transition_7d_count",
+        "public_ip_transition_details",
+        "public_ip_transition_details_truncated",
+        "auth_pattern_score_effect",
       ))
     end
 
@@ -214,12 +246,54 @@ module ::AccountSecurity
       (a & b).to_a.sort
     end
 
-    def shared_session_signatures(user_a_id, user_b_id, allowed_networks)
-      return [] if allowed_networks.blank?
+    def shared_session_signature_summary(user_a_id, user_b_id, allowed_networks)
+      empty = { count: 0, repeated_count: 0, paired_observations: 0, span_days: 0 }
+      return empty if allowed_networks.blank?
+
       cutoff = SessionSignatureRecorder.retention_cutoff
-      a = SessionSignature.where(user_id: user_a_id, network_key: allowed_networks).where("last_seen_at >= ?", cutoff).pluck(:network_key, :signature_hash).map { |network, signature| [network.to_s, signature] }.to_set
-      b = SessionSignature.where(user_id: user_b_id, network_key: allowed_networks).where("last_seen_at >= ?", cutoff).pluck(:network_key, :signature_hash).map { |network, signature| [network.to_s, signature] }.to_set
-      (a & b).to_a
+      rows_a =
+        SessionSignature
+          .where(user_id: user_a_id, network_key: allowed_networks)
+          .where("last_seen_at >= ?", cutoff)
+          .pluck(:network_key, :signature_hash, :first_seen_at, :last_seen_at, :observation_count)
+          .index_by { |row| [row[0].to_s, row[1].to_s] }
+      return empty if rows_a.empty?
+
+      rows_b =
+        SessionSignature
+          .where(user_id: user_b_id, network_key: allowed_networks)
+          .where("last_seen_at >= ?", cutoff)
+          .pluck(:network_key, :signature_hash, :first_seen_at, :last_seen_at, :observation_count)
+          .index_by { |row| [row[0].to_s, row[1].to_s] }
+      shared = rows_a.keys & rows_b.keys
+      return empty if shared.empty?
+
+      repeated_count = 0
+      paired_observations = 0
+      max_span_seconds = 0
+      shared.each do |key|
+        row_a = rows_a[key]
+        row_b = rows_b[key]
+        observations_a = row_a[4].to_i
+        observations_b = row_b[4].to_i
+        repeated_count += 1 if observations_a >= 2 && observations_b >= 2
+        paired_observations += [observations_a, observations_b].min
+
+        starts = [row_a[2], row_b[2]].compact
+        finishes = [row_a[3], row_b[3]].compact
+        if starts.any? && finishes.any?
+          max_span_seconds = [max_span_seconds, (finishes.max - starts.min).to_i].max
+        end
+      end
+
+      {
+        count: shared.length,
+        repeated_count: repeated_count,
+        paired_observations: paired_observations,
+        span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
+      }
+    rescue ActiveRecord::StatementInvalid
+      empty || { count: 0, repeated_count: 0, paired_observations: 0, span_days: 0 }
     end
 
     def distinct_users_on_network(network)

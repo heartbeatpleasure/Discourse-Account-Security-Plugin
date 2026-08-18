@@ -251,6 +251,55 @@ export default class AccountSecurityCorrelationPair extends Component {
           {{#if @item.evidence.temporal_ip_details_truncated}}<div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.temporal_details_truncated"}}</div>{{/if}}
         {{/if}}
 
+        {{#if @item.has_auth_pattern_evidence}}
+          <div class="as-correlation__evidence-title">
+            <h4>{{i18n "admin.account_security.correlations.auth_patterns_title"}}</h4>
+            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.auth_patterns_description"}}</p>
+          </div>
+          <div class="as-correlation__compact-grid">
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_very_close_logins"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_within_5m_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_close_logins"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_within_30m_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_same_client"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_same_client_within_30m_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_public_transitions"}}</div><div class="as-correlation__value">{{@item.evidence.aligned_public_ip_transition_7d_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_shared_client_signatures"}}</div><div class="as-correlation__value">{{@item.evidence.shared_auth_client_signature_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_browser"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_browser_continuity_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_session"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_shared_session_signature_count}}</div></div>
+          </div>
+
+          {{#if @item.evidence.auth_client_signature_population_complete}}
+            {{#if @item.evidence.max_shared_auth_client_signature_users}}
+              <p class="as-correlation__muted" style="margin-top: .65rem;">{{i18n "admin.account_security.correlations.auth_patterns_signature_seen_by" count=@item.evidence.max_shared_auth_client_signature_users}}</p>
+            {{/if}}
+          {{/if}}
+
+          {{#if @item.auth_proximity_details.length}}
+            <div class="as-correlation__temporal-list">
+              {{#each @item.auth_proximity_details as |detail|}}
+                <div class="as-correlation__temporal-card">
+                  <div class="as-correlation__temporal-card-header"><span class="as-correlation__ip-address">{{detail.ip_address}}</span><span class="as-correlation__badge">{{detail.closest_gap_display}}</span></div>
+                  <div class="as-correlation__temporal-account-grid">
+                    <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_close_logins"}}</div><div class="as-correlation__value">{{detail.within_30m_count}}</div></div>
+                    <div><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_same_client"}}</div><div class="as-correlation__value">{{detail.same_client_within_30m_count}}</div></div>
+                  </div>
+                </div>
+              {{/each}}
+            </div>
+          {{/if}}
+
+          {{#if @item.public_ip_transition_details.length}}
+            <div class="as-correlation__temporal-list">
+              {{#each @item.public_ip_transition_details as |detail|}}
+                <div class="as-correlation__temporal-card">
+                  <div class="as-correlation__temporal-card-header"><span class="as-correlation__ip-address">{{detail.from_ip}} → {{detail.to_ip}}</span><span class="as-correlation__badge">{{detail.closest_gap_display}}</span></div>
+                  <p class="as-correlation__muted" style="margin-top: .55rem;">{{i18n "admin.account_security.correlations.auth_patterns_transition_detail"}}</p>
+                </div>
+              {{/each}}
+            </div>
+          {{/if}}
+
+          <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.auth_patterns_score_note"}}</div>
+        {{/if}}
+
         {{#if @item.score_breakdown.length}}
           <div class="as-correlation__evidence-title">
             <h4>{{i18n "admin.account_security.correlations.score_explanation"}}</h4>
@@ -263,7 +312,9 @@ export default class AccountSecurityCorrelationPair extends Component {
           </div>
         {{/if}}
 
-        {{#if @item.evidence.browser_continuity_count}}<div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.browser_continuity_note"}}</div>{{/if}}
+        {{#if @item.evidence.browser_continuity_count}}
+          {{#unless @item.has_auth_pattern_evidence}}<div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.browser_continuity_note"}}</div>{{/unless}}
+        {{/if}}
 
         <section class="as-correlation__investigation">
           <div class="as-correlation__evidence-title as-correlation__evidence-title--first">

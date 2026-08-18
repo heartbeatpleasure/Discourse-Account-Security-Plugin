@@ -230,6 +230,22 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     };
   }
 
+  decorateAuthProximityDetail(detail) {
+    return {
+      ...detail,
+      closest_gap_display: this.temporalGapLabel(detail.closest_gap_seconds),
+    };
+  }
+
+  decorateTransitionDetail(detail) {
+    return {
+      ...detail,
+      closest_gap_display: this.temporalGapLabel(
+        detail.closest_transition_gap_seconds
+      ),
+    };
+  }
+
   decorateBreakdown(entry) {
     const label = i18n(
       `admin.account_security.correlations.score_reasons.${entry.key}`
@@ -360,6 +376,18 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         evidence.closest_shared_ip_gap_seconds
       ),
       has_temporal_evidence: Number(evidence.timed_shared_ip_count || 0) > 0,
+      auth_proximity_details: (evidence.auth_proximity_details || []).map(
+        (detail) => this.decorateAuthProximityDetail(detail)
+      ),
+      public_ip_transition_details: (
+        evidence.public_ip_transition_details || []
+      ).map((detail) => this.decorateTransitionDetail(detail)),
+      has_auth_pattern_evidence:
+        Number(evidence.auth_proximity_within_30m_count || 0) > 0 ||
+        Number(evidence.shared_auth_client_signature_count || 0) > 0 ||
+        Number(evidence.aligned_public_ip_transition_7d_count || 0) > 0 ||
+        Number(evidence.repeated_browser_continuity_count || 0) > 0 ||
+        Number(evidence.repeated_shared_session_signature_count || 0) > 0,
       network_context_summary: {
         ...networkSummary,
         organizations_display: (networkSummary.organizations || []).join(", "),
@@ -395,6 +423,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ["diagnostics_large_groups", diagnostics.large_ip_groups_skipped],
       ["diagnostics_existing_pairs", diagnostics.existing_pairs_added],
       ["diagnostics_temporal_observations", diagnostics.temporal_observation_rows],
+      ["diagnostics_auth_pattern_rows", diagnostics.auth_pattern_rows],
       ["diagnostics_total_pairs", diagnostics.total_candidate_pairs],
     ].map(([key, value]) => ({
       label: i18n(`admin.account_security.correlations.${key}`),
@@ -664,6 +693,41 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       evidenceSummary.push(
         i18n("admin.account_security.correlations.account_group_temporal_pairs", {
           count: Number(evidenceCounts.temporal_24h_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.auth_proximity_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_auth_proximity_pairs", {
+          count: Number(evidenceCounts.auth_proximity_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.auth_same_client_proximity_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_auth_same_client_pairs", {
+          count: Number(evidenceCounts.auth_same_client_proximity_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.public_transition_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_transition_pairs", {
+          count: Number(evidenceCounts.public_transition_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.browser_continuity_repeated_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_repeated_browser_pairs", {
+          count: Number(evidenceCounts.browser_continuity_repeated_pairs || 0),
+        })
+      );
+    }
+    if (Number(evidenceCounts.repeated_session_signature_pairs || 0) > 0) {
+      evidenceSummary.push(
+        i18n("admin.account_security.correlations.account_group_repeated_session_pairs", {
+          count: Number(evidenceCounts.repeated_session_signature_pairs || 0),
         })
       );
     }

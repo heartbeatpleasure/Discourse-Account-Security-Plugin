@@ -110,6 +110,27 @@ RSpec.describe AccountSecurity::AccountGroupBuilder do
     expect(described_class.build_index[:groups]).to be_empty
   end
 
+  it "summarizes recurring local correlation signals without making them new group-forming rules" do
+    evidence = public_ip_evidence("8.8.8.8").merge(
+      "repeated_shared_session_signature_count" => 1,
+      "repeated_browser_continuity_count" => 1,
+      "auth_proximity_within_30m_count" => 2,
+      "auth_proximity_same_client_within_30m_count" => 1,
+      "aligned_public_ip_transition_7d_count" => 1,
+    )
+    create_correlation(user_a, user_b, evidence: evidence)
+    create_correlation(user_b, user_c, evidence: public_ip_evidence("1.1.1.1"))
+
+    group = described_class.build_index[:groups].first
+
+    expect(group.dig(:evidence_counts, :repeated_session_signature_pairs)).to eq(1)
+    expect(group.dig(:evidence_counts, :browser_continuity_repeated_pairs)).to eq(1)
+    expect(group.dig(:evidence_counts, :auth_proximity_pairs)).to eq(1)
+    expect(group.dig(:evidence_counts, :auth_same_client_proximity_pairs)).to eq(1)
+    expect(group.dig(:evidence_counts, :public_transition_pairs)).to eq(1)
+    expect(group[:relation_count]).to eq(2)
+  end
+
   it "groups three or more accounts around one exact shared registration IP" do
     evidence = public_ip_evidence("8.8.4.4").merge("shared_registration_ip" => true)
     create_correlation(user_a, user_b, evidence: evidence)

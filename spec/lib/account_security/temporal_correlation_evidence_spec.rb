@@ -45,3 +45,79 @@ RSpec.describe AccountSecurity::TemporalCorrelationEvidence do
     expect(evidence["temporal_repeated_public_alignment"]).to eq(true)
   end
 end
+
+RSpec.describe "authentication pattern evidence" do
+  fab!(:pattern_user_a) { Fabricate(:user) }
+  fab!(:pattern_user_b) { Fabricate(:user) }
+
+  it "finds repeated close logins, matching client signatures and aligned public-IP transitions without copying user agents" do
+    base = 5.days.ago.change(usec: 0)
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36"
+
+    [
+      ["8.8.8.8", base, base + 2.minutes],
+      ["1.1.1.1", base + 1.day, base + 1.day + 10.minutes],
+    ].each do |ip, time_a, time_b|
+      UserAuthTokenLog.create!(
+        user_id: pattern_user_a.id,
+        action: "generate",
+        client_ip: ip,
+        user_agent: user_agent,
+        created_at: time_a,
+      )
+      UserAuthTokenLog.create!(
+        user_id: pattern_user_b.id,
+        action: "generate",
+        client_ip: ip,
+        user_agent: user_agent,
+        created_at: time_b,
+      )
+    end
+
+    evidence = AccountSecurity::TemporalCorrelationEvidence.for_pair(
+      pattern_user_a.id,
+      pattern_user_b.id,
+      shared_ips: ["8.8.8.8", "1.1.1.1"],
+    )
+
+    expect(evidence["auth_pattern_evidence_version"]).to eq(1)
+    expect(evidence["auth_proximity_within_5m_count"]).to eq(1)
+    expect(evidence["auth_proximity_within_30m_count"]).to eq(2)
+    expect(evidence["auth_proximity_same_client_within_30m_count"]).to eq(2)
+    expect(evidence["auth_proximity_public_ip_count"]).to eq(2)
+    expect(evidence["shared_auth_client_signature_count"]).to eq(1)
+    expect(evidence["repeated_shared_auth_client_signature_count"]).to eq(1)
+    expect(evidence["aligned_public_ip_transition_24h_count"]).to eq(1)
+    expect(evidence["aligned_public_ip_transition_7d_count"]).to eq(1)
+    expect(evidence["auth_pattern_score_effect"]).to eq("none")
+    expect(evidence.to_json).not_to include(user_agent)
+  end
+
+  it "contextualizes an exact client signature with its scanned-account population when the full auth history fits the safety cap" do
+    third_user = Fabricate(:user)
+    base = 2.days.ago.change(usec: 0)
+    user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36"
+
+    [pattern_user_a, pattern_user_b, third_user].each_with_index do |user, index|
+      UserAuthTokenLog.create!(
+        user_id: user.id,
+        action: "generate",
+        client_ip: index == 2 ? "9.9.9.9" : "8.8.8.8",
+        user_agent: user_agent,
+        created_at: base + index.minutes,
+      )
+    end
+
+    index = AccountSecurity::TemporalCorrelationEvidence.build_scan_index
+    evidence = index.evidence_for_pair(
+      pattern_user_a.id,
+      pattern_user_b.id,
+      shared_ips: ["8.8.8.8"],
+    )
+
+    expect(evidence["shared_auth_client_signature_count"]).to eq(1)
+    expect(evidence["max_shared_auth_client_signature_users"]).to eq(3)
+    expect(evidence["auth_client_signature_population_complete"]).to eq(true)
+    expect(evidence.to_json).not_to include(user_agent)
+  end
+end

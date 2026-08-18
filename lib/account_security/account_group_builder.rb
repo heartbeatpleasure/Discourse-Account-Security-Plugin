@@ -126,7 +126,12 @@ module ::AccountSecurity
         authentication_ip_pairs: 0,
         browser_continuity_pairs: 0,
         session_signature_pairs: 0,
+        repeated_session_signature_pairs: 0,
+        browser_continuity_repeated_pairs: 0,
         temporal_24h_pairs: 0,
+        auth_proximity_pairs: 0,
+        auth_same_client_proximity_pairs: 0,
+        public_transition_pairs: 0,
       }
 
       eligible_relations.each do |row|
@@ -139,7 +144,12 @@ module ::AccountSecurity
         evidence_counts[:authentication_ip_pairs] += 1 if evidence["shared_auth_ip_count"].to_i.positive?
         evidence_counts[:browser_continuity_pairs] += 1 if evidence["browser_continuity_count"].to_i.positive?
         evidence_counts[:session_signature_pairs] += 1 if evidence["shared_session_signature_count"].to_i.positive?
+        evidence_counts[:repeated_session_signature_pairs] += 1 if evidence["repeated_shared_session_signature_count"].to_i.positive?
+        evidence_counts[:browser_continuity_repeated_pairs] += 1 if evidence["repeated_browser_continuity_count"].to_i.positive?
         evidence_counts[:temporal_24h_pairs] += 1 if evidence["temporal_within_24h_count"].to_i.positive?
+        evidence_counts[:auth_proximity_pairs] += 1 if evidence["auth_proximity_within_30m_count"].to_i.positive?
+        evidence_counts[:auth_same_client_proximity_pairs] += 1 if evidence["auth_proximity_same_client_within_30m_count"].to_i.positive?
+        evidence_counts[:public_transition_pairs] += 1 if evidence["aligned_public_ip_transition_7d_count"].to_i.positive?
 
         collect_anchors!(anchors, row)
       end

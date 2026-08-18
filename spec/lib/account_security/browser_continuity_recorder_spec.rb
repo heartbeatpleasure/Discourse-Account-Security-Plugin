@@ -47,6 +47,13 @@ RSpec.describe AccountSecurity::BrowserContinuityRecorder do
     expect(summary[:count]).to eq(1)
     expect(summary[:max_users]).to eq(2)
     expect(AccountSecurity::BrowserContinuity.where(token_hash: digest).count).to eq(2)
+
+    described_class.record!(user_id: user_a.id, token_hash: digest, observed_at: 2.days.from_now)
+    described_class.record!(user_id: user_b.id, token_hash: digest, observed_at: 2.days.from_now)
+    repeated = described_class.shared_summary(user_a.id, user_b.id)
+    expect(repeated[:repeated_count]).to eq(1)
+    expect(repeated[:paired_observations]).to eq(2)
+    expect(repeated[:max_span_days]).to be >= 1
   end
 
   it "keeps browser continuity supplemental and does not create a candidate by itself" do

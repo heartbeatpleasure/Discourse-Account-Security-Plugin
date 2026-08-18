@@ -27,16 +27,16 @@ RSpec.describe AccountSecurity::AccountCorrelationScanContext do
         user_id: user.id,
         network_key: "8.8.8.8/32",
         signature_hash: "d" * 64,
-        first_seen_at: now,
+        first_seen_at: now - 2.days,
         last_seen_at: now,
-        observation_count: 1,
+        observation_count: 3,
       )
       AccountSecurity::BrowserContinuity.create!(
         user_id: user.id,
         token_hash: "e" * 64,
-        first_seen_at: now,
+        first_seen_at: now - 3.days,
         last_seen_at: now,
-        observation_count: 1,
+        observation_count: 2,
       )
     end
 
@@ -48,6 +48,10 @@ RSpec.describe AccountSecurity::AccountCorrelationScanContext do
     expect(pairs).to include([user_a.id, user_b.id].sort)
     expect(evidence["shared_networks"]).to include("8.8.8.8/32")
     expect(evidence["shared_session_signature_count"]).to eq(1)
+    expect(evidence["repeated_shared_session_signature_count"]).to eq(1)
+    expect(evidence["shared_session_signature_paired_observations"]).to eq(3)
     expect(evidence["browser_continuity_count"]).to eq(1)
+    expect(evidence["repeated_browser_continuity_count"]).to eq(1)
+    expect(evidence["browser_continuity_paired_observations"]).to eq(2)
   end
 end

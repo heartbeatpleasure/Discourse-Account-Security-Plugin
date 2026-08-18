@@ -567,8 +567,13 @@ module ::AccountSecurity
           registration_ip_pairs: group.dig(:evidence_counts, :registration_ip_pairs).to_i,
           authentication_ip_pairs: group.dig(:evidence_counts, :authentication_ip_pairs).to_i,
           browser_continuity_pairs: group.dig(:evidence_counts, :browser_continuity_pairs).to_i,
+          browser_continuity_repeated_pairs: group.dig(:evidence_counts, :browser_continuity_repeated_pairs).to_i,
           session_signature_pairs: group.dig(:evidence_counts, :session_signature_pairs).to_i,
+          repeated_session_signature_pairs: group.dig(:evidence_counts, :repeated_session_signature_pairs).to_i,
           temporal_24h_pairs: group.dig(:evidence_counts, :temporal_24h_pairs).to_i,
+          auth_proximity_pairs: group.dig(:evidence_counts, :auth_proximity_pairs).to_i,
+          auth_same_client_proximity_pairs: group.dig(:evidence_counts, :auth_same_client_proximity_pairs).to_i,
+          public_transition_pairs: group.dig(:evidence_counts, :public_transition_pairs).to_i,
         },
         shared_anchor_count: group[:shared_anchor_count].to_i,
         anchors: anchors,
@@ -625,8 +630,14 @@ module ::AccountSecurity
           shared_network_count: evidence["shared_network_count"].to_i,
           shared_networks: Array(evidence["shared_networks"]).map(&:to_s).first(AccountCorrelationService::MAX_SHARED_NETWORKS_IN_PAYLOAD),
           shared_session_signature_count: evidence["shared_session_signature_count"].to_i,
+          repeated_shared_session_signature_count: evidence["repeated_shared_session_signature_count"].to_i,
+          shared_session_signature_paired_observations: evidence["shared_session_signature_paired_observations"].to_i,
+          shared_session_signature_span_days: evidence["shared_session_signature_span_days"].to_i,
           browser_continuity_count: evidence["browser_continuity_count"].to_i,
           max_browser_continuity_users: evidence["max_browser_continuity_users"].to_i,
+          repeated_browser_continuity_count: evidence["repeated_browser_continuity_count"].to_i,
+          browser_continuity_paired_observations: evidence["browser_continuity_paired_observations"].to_i,
+          browser_continuity_span_days: evidence["browser_continuity_span_days"].to_i,
           browser_continuity_positive_only: evidence["browser_continuity_positive_only"] == true,
           registration_delta_minutes: evidence["registration_delta_minutes"].to_i,
           max_shared_network_users: evidence["max_shared_network_users"].to_i,
@@ -645,6 +656,24 @@ module ::AccountSecurity
           temporal_ip_details: serialize_temporal_ip_details(evidence["temporal_ip_details"]),
           temporal_ip_details_truncated: evidence["temporal_ip_details_truncated"] == true,
           temporal_score_effect: evidence["temporal_score_effect"] == "none" ? "none" : nil,
+          auth_pattern_evidence_version: evidence["auth_pattern_evidence_version"].to_i,
+          auth_proximity_within_5m_count: evidence["auth_proximity_within_5m_count"].to_i,
+          auth_proximity_within_30m_count: evidence["auth_proximity_within_30m_count"].to_i,
+          auth_proximity_same_client_within_30m_count: evidence["auth_proximity_same_client_within_30m_count"].to_i,
+          auth_proximity_public_ip_count: evidence["auth_proximity_public_ip_count"].to_i,
+          auth_proximity_details: serialize_auth_proximity_details(evidence["auth_proximity_details"]),
+          auth_proximity_details_truncated: evidence["auth_proximity_details_truncated"] == true,
+          shared_auth_client_signature_count: evidence["shared_auth_client_signature_count"].to_i,
+          repeated_shared_auth_client_signature_count: evidence["repeated_shared_auth_client_signature_count"].to_i,
+          shared_auth_client_signature_paired_observations: evidence["shared_auth_client_signature_paired_observations"].to_i,
+          max_shared_auth_client_signature_users: nonnegative_integer_or_nil(evidence["max_shared_auth_client_signature_users"]),
+          auth_client_signature_population_complete: evidence["auth_client_signature_population_complete"] == true,
+          public_ip_transition_match_count: evidence["public_ip_transition_match_count"].to_i,
+          aligned_public_ip_transition_24h_count: evidence["aligned_public_ip_transition_24h_count"].to_i,
+          aligned_public_ip_transition_7d_count: evidence["aligned_public_ip_transition_7d_count"].to_i,
+          public_ip_transition_details: serialize_public_ip_transition_details(evidence["public_ip_transition_details"]),
+          public_ip_transition_details_truncated: evidence["public_ip_transition_details_truncated"] == true,
+          auth_pattern_score_effect: evidence["auth_pattern_score_effect"] == "none" ? "none" : nil,
           raw_user_agent_stored: false,
         },
       }
@@ -795,6 +824,38 @@ module ::AccountSecurity
           closest_gap_seconds: nonnegative_integer_or_nil(raw["closest_gap_seconds"]),
           observations_a: raw["observations_a"].to_i.clamp(0, 1_000_000),
           observations_b: raw["observations_b"].to_i.clamp(0, 1_000_000),
+        }
+      end
+    end
+
+    def serialize_auth_proximity_details(value)
+      Array(value).first(TemporalCorrelationEvidence::MAX_AUTH_PROXIMITY_DETAILS).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        ip = IpNormalizer.normalize(raw["ip_address"])
+        next if ip.blank?
+
+        {
+          ip_address: ip,
+          public: raw["public"] == true,
+          closest_gap_seconds: nonnegative_integer_or_nil(raw["closest_gap_seconds"]),
+          within_5m_count: raw["within_5m_count"].to_i.clamp(0, 100_000),
+          within_30m_count: raw["within_30m_count"].to_i.clamp(0, 100_000),
+          same_client_within_30m_count: raw["same_client_within_30m_count"].to_i.clamp(0, 100_000),
+        }
+      end
+    end
+
+    def serialize_public_ip_transition_details(value)
+      Array(value).first(TemporalCorrelationEvidence::MAX_TRANSITION_DETAILS).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        from_ip = IpNormalizer.normalize_public(raw["from_ip"])
+        to_ip = IpNormalizer.normalize_public(raw["to_ip"])
+        next if from_ip.blank? || to_ip.blank? || from_ip == to_ip
+
+        {
+          from_ip: from_ip,
+          to_ip: to_ip,
+          closest_transition_gap_seconds: nonnegative_integer_or_nil(raw["closest_transition_gap_seconds"]),
         }
       end
     end
