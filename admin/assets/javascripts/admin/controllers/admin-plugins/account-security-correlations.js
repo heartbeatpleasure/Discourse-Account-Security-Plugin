@@ -3,6 +3,7 @@ import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import getURL from "discourse/lib/get-url";
 import { userPath } from "discourse/lib/url";
 import { i18n } from "discourse-i18n";
 import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
@@ -157,8 +158,40 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     return {
       ...user,
       profile_url: userPath(user.username),
+      admin_url: getURL(`/admin/users/${user.id}/${encodeURIComponent(user.username)}`),
       created_at_display: formatAccountSecurityDateTime(user.created_at),
       last_seen_at_display: formatAccountSecurityDateTime(user.last_seen_at),
+    };
+  }
+
+  decorateReview(review) {
+    const actionKey = [
+      "status_changed",
+      "note_added",
+      "primary_account_changed",
+    ].includes(review.action)
+      ? review.action
+      : "note_added";
+
+    const fromStatusLabel = review.from_status
+      ? i18n(`admin.account_security.correlations.statuses.${review.from_status}`)
+      : null;
+    const toStatusLabel = review.to_status
+      ? i18n(`admin.account_security.correlations.statuses.${review.to_status}`)
+      : null;
+
+    return {
+      ...review,
+      created_at_display: formatAccountSecurityDateTime(review.created_at),
+      action_label: i18n(
+        `admin.account_security.correlations.review_actions.${actionKey}`
+      ),
+      from_status_label: fromStatusLabel,
+      to_status_label: toStatusLabel,
+      status_transition_display:
+        fromStatusLabel && toStatusLabel && fromStatusLabel !== toStatusLabel
+          ? `${fromStatusLabel} → ${toStatusLabel}`
+          : toStatusLabel,
     };
   }
 
@@ -166,6 +199,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     const evidence = item.evidence || {};
     const userA = this.decorateUser(item.user_a);
     const userB = this.decorateUser(item.user_b);
+    const primaryUser = this.decorateUser(item.primary_user);
     const signals = [];
 
     if (evidence.shared_exact_ip_count > 0) {
@@ -201,6 +235,10 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ...item,
       user_a: userA,
       user_b: userB,
+      primary_user: primaryUser,
+      review_history: (item.review_history || []).map((review) =>
+        this.decorateReview(review)
+      ),
       confidence_label: i18n(
         `admin.account_security.correlations.confidences.${item.confidence}`
       ),
@@ -493,12 +531,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   }
 
   @action
-  async review(item, status) {
+  async saveReview(item, status, note, primaryUserId) {
     if (
       status === "confirmed_duplicate" &&
+      item.status !== "confirmed_duplicate" &&
       !window.confirm(i18n("admin.account_security.correlations.confirm_duplicate"))
     ) {
-      return;
+      return false;
     }
 
     try {
@@ -506,12 +545,16 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         type: "PUT",
         data: {
           status,
+          review_note: note || "",
+          primary_user_id: primaryUserId || "",
           confirmed: status === "confirmed_duplicate",
         },
       });
       await this.loadCorrelations();
+      return true;
     } catch (error) {
       popupAjaxError(error);
+      return false;
     }
   }
 

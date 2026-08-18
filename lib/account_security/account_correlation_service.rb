@@ -93,6 +93,7 @@ module ::AccountSecurity
       created = correlation.new_record?
       correlation.save!
       Statistics.increment!(correlation_candidates: 1) if created
+      CorrelationIncidentNotifier.notify_if_needed!(correlation, source: source)
       correlation
     rescue ActiveRecord::RecordNotUnique
       recalculate_pair!(

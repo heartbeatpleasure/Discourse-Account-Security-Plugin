@@ -27,6 +27,7 @@ en:
     account_security_user_notes_enabled: "Add one concise User Note for a High/Critical escalated event when the Discourse User Notes plugin is available. OFF by default. Notes omit the raw IP address and provider score."
     account_security_temporary_ip_blocks_enabled: "Allow administrators to create explicit, time-limited Discourse IP blocks from eligible High/Critical events. OFF by default. Account Security never takes ownership of an existing screening rule."
     account_security_staff_notifications_enabled: "Send one incident-based private message from the system account to the configured staff groups for qualifying escalations. OFF by default."
+    account_security_correlation_notifications_enabled: "Send deduplicated staff private messages for new real-time Strong/Very strong account-correlation findings. OFF by default. Full/manual/scheduled historical scans never generate notification floods."
     account_security_notification_groups: "Groups that receive Account Security incident private messages when staff notifications are enabled."
     account_security_notification_include_ip: "Include the exact IP address in incident private messages. OFF by default; the event detail page remains the authoritative place to view the IP."
     account_security_daily_check_budget: "Local safety budget for AbuseIPDB CHECK requests per UTC day. Provider rate-limit headers remain authoritative."
@@ -56,6 +57,7 @@ en:
         duplicate: "That trusted network already exists."
       correlations:
         disabled: "Account correlation is disabled in settings."
+        review_note_required: "Add an investigation note before saving this classification."
       events:
         user_note_unavailable: "A User Note cannot be created for this event."
         existing_ip_screening: "A Discourse IP screening rule already applies to this address. Account Security will not replace or take ownership of it."
@@ -64,6 +66,27 @@ en:
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} was escalated for staff review with %{severity} severity. This security signal does not by itself establish account misconduct."
+
+    correlation_notification:
+      title: "Account Security: %{confidence} account correlation"
+      unknown_user: "Unknown account"
+      confidences:
+        strong: "Strong"
+        very_strong: "Very strong"
+      body: |-
+        Account Security detected a new or materially stronger real-time account-correlation finding.
+
+        - Accounts: %{user_a} ↔ %{user_b}
+        - Current score: %{score}
+        - Confidence: %{confidence}
+        - Shared exact IPs: %{shared_ips}
+        - Shared public IPs: %{public_ips}
+        - Shared IPs backed by authentication/session history: %{auth_ips}
+
+        Review the internal evidence and investigation history: %{correlation_url}
+
+        This is an investigation signal only. No account was suspended, blocked, merged or otherwise moderated automatically.
+
     notification:
       title: "Account Security: %{severity} incident"
       no_user: "No single account"

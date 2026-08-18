@@ -180,6 +180,13 @@ plugins:
     default: false
     client: false
 
+  account_security_correlation_notifications_enabled:
+    default: false
+    client: false
+    depends_on:
+      - account_security_staff_notifications_enabled
+      - account_security_account_correlation_enabled
+
   account_security_notification_groups:
     default: ""
     type: group_list

@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.8.0
+# version: 0.10.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.8.0"
+  PLUGIN_VERSION = "0.10.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -40,6 +40,7 @@ after_initialize do
     app/models/account_security/session_signature.rb
     app/models/account_security/browser_continuity.rb
     app/models/account_security/account_correlation.rb
+    app/models/account_security/correlation_review.rb
     app/controllers/account_security/admin_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
@@ -60,6 +61,7 @@ after_initialize do
     lib/account_security/temporal_correlation_evidence.rb
     lib/account_security/account_correlation_policy.rb
     lib/account_security/account_correlation_service.rb
+    lib/account_security/correlation_investigation_service.rb
     lib/account_security/account_correlation_scan_context.rb
     lib/account_security/account_correlation_scanner.rb
     lib/account_security/account_correlation_scheduler.rb
@@ -70,6 +72,7 @@ after_initialize do
     lib/account_security/temporary_ip_block_manager.rb
     lib/account_security/notification_suppression_manager.rb
     lib/account_security/incident_notifier.rb
+    lib/account_security/correlation_incident_notifier.rb
     lib/account_security/event_recorder.rb
     lib/account_security/assessment_service.rb
     lib/account_security/health.rb
@@ -156,8 +159,13 @@ after_initialize do
     ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
     ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
     ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
-    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
+    correlation_ids = ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).pluck(:id)
+    ::AccountSecurity::CorrelationReview.where(account_correlation_id: correlation_ids).delete_all if correlation_ids.any?
+    ::AccountSecurity::CorrelationReview.where(actor_user_id: user.id).update_all(actor_user_id: nil)
+    ::AccountSecurity::CorrelationReview.where(primary_user_id: user.id).update_all(primary_user_id: nil)
+    ::AccountSecurity::AccountCorrelation.where(id: correlation_ids).delete_all if correlation_ids.any?
     ::AccountSecurity::AccountCorrelation.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
+    ::AccountSecurity::AccountCorrelation.where(primary_user_id: user.id).update_all(primary_user_id: nil)
   end
 
   on(:user_anonymized) do |args|
@@ -169,7 +177,13 @@ after_initialize do
     # account itself is anonymized, regardless of whether core IP anonymization
     # was requested as part of the same operation.
     ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
-    ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).delete_all
+    correlation_ids = ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).pluck(:id)
+    ::AccountSecurity::CorrelationReview.where(account_correlation_id: correlation_ids).delete_all if correlation_ids.any?
+    ::AccountSecurity::CorrelationReview.where(actor_user_id: user.id).update_all(actor_user_id: nil)
+    ::AccountSecurity::CorrelationReview.where(primary_user_id: user.id).update_all(primary_user_id: nil)
+    ::AccountSecurity::AccountCorrelation.where(id: correlation_ids).delete_all if correlation_ids.any?
+    ::AccountSecurity::AccountCorrelation.where(reviewed_by_id: user.id).update_all(reviewed_by_id: nil)
+    ::AccountSecurity::AccountCorrelation.where(primary_user_id: user.id).update_all(primary_user_id: nil)
 
     next unless opts&.key?(:anonymize_ip)
 

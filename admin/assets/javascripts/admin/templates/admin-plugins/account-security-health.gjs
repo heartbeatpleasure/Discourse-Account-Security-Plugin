@@ -176,6 +176,7 @@ export default RouteTemplate(
               <div><strong>{{i18n "admin.account_security.health.browser_continuity"}}:</strong> {{@controller.data.configuration.browser_continuity_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.correlation_auto_scan"}}:</strong> {{@controller.correlationAutoScanLabel}}</div>
               <div><strong>{{i18n "admin.account_security.health.staff_notifications"}}:</strong> {{@controller.data.configuration.staff_notifications_enabled}}</div>
+              <div><strong>{{i18n "admin.account_security.health.correlation_notifications"}}:</strong> {{@controller.data.configuration.correlation_notifications_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.user_notes"}}:</strong> {{@controller.data.configuration.user_notes_enabled}}</div>
               <div><strong>{{i18n "admin.account_security.health.temporary_blocks"}}:</strong> {{@controller.data.configuration.temporary_ip_blocks_enabled}}</div>
             </div>

@@ -33,6 +33,11 @@ module Jobs
           .where.not(status: "confirmed_duplicate")
           .where("last_seen_at < ?", correlation_cutoff),
       )
+      delete_in_batches(
+        ::AccountSecurity::CorrelationReview.where.not(
+          account_correlation_id: ::AccountSecurity::AccountCorrelation.select(:id),
+        ),
+      )
     end
 
     private

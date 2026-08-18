@@ -75,10 +75,49 @@ RSpec.describe AccountSecurity::AdminController do
     )
 
     sign_in(admin)
-    put "/admin/plugins/account-security/correlations/#{correlation.id}.json", params: { status: "confirmed_duplicate" }
+    put "/admin/plugins/account-security/correlations/#{correlation.id}.json",
+        params: { status: "confirmed_duplicate", review_note: "Independent duplicate review." }
 
     expect(response.status).to eq(400)
     expect(correlation.reload.status).to eq("open")
   end
+
+  it "stores correlation investigation history and an optional account to keep" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    user_a_id, user_b_id = [first.id, second.id].sort
+    correlation = AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: 80,
+      confidence: "very_strong",
+      status: "open",
+      evidence: {},
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    sign_in(admin)
+    put "/admin/plugins/account-security/correlations/#{correlation.id}.json",
+        params: {
+          status: "confirmed_duplicate",
+          review_note: "Staff independently confirmed both accounts belong to the same member.",
+          primary_user_id: user_a_id,
+          confirmed: true,
+        }
+
+    expect(response.status).to eq(200)
+    correlation.reload
+    expect(correlation.status).to eq("confirmed_duplicate")
+    expect(correlation.primary_user_id).to eq(user_a_id)
+    expect(correlation.reviewed_by_id).to eq(admin.id)
+    expect(AccountSecurity::CorrelationReview.where(account_correlation_id: correlation.id).count).to eq(1)
+    payload = response.parsed_body["item"]
+    expect(payload["review_history"].length).to eq(1)
+    expect(payload["primary_user"]["id"]).to eq(user_a_id)
+  end
+
 
 end

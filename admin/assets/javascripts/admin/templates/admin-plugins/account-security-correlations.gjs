@@ -327,6 +327,12 @@ export default RouteTemplate(
       .as-correlation__account-meta .as-correlation__value {
         font-size: var(--font-down-1);
       }
+      .as-correlation__account-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .45rem;
+        margin-top: .7rem;
+      }
       .as-correlation__candidate-meta {
         display: grid;
         grid-template-columns: minmax(0, 1.4fr) minmax(230px, .6fr);
@@ -436,15 +442,92 @@ export default RouteTemplate(
         color: var(--as-muted);
         font-size: var(--font-down-1);
       }
-      .as-correlation__review {
+      .as-correlation__investigation {
+        margin-top: 1rem;
+        padding-top: .2rem;
+        border-top: 1px solid var(--as-border);
+      }
+      .as-correlation__evidence-title--first {
+        margin-top: .7rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+      .as-correlation__investigation-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: .6rem;
+        margin-top: .75rem;
+      }
+      .as-correlation__review-form {
+        display: grid;
+        grid-template-columns: minmax(180px, .75fr) minmax(180px, .75fr) minmax(300px, 1.5fr) auto;
+        align-items: end;
+        gap: .75rem;
+        margin-top: .8rem;
+        padding: .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--secondary);
+      }
+      .as-correlation__review-form .as-correlation__field {
+        min-width: 0;
+      }
+      .as-correlation__review-form select,
+      .as-correlation__review-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        margin: 0;
+      }
+      .as-correlation__review-form textarea {
+        min-height: 5.4rem;
+        resize: vertical;
+      }
+      .as-correlation__field--note {
+        grid-column: span 1;
+      }
+      .as-correlation__field-hint {
+        color: var(--as-muted);
+        font-size: var(--font-down-2);
+        line-height: 1.35;
+      }
+      .as-correlation__review-save {
         display: flex;
-        flex-wrap: wrap;
-        align-items: center;
+        align-items: flex-end;
+      }
+      .as-correlation__review-save .btn { white-space: nowrap; }
+      .as-correlation__history {
+        margin-top: .9rem;
+      }
+      .as-correlation__history > h4 { margin-bottom: .6rem; }
+      .as-correlation__history-list {
+        display: grid;
+        gap: .55rem;
+      }
+      .as-correlation__history-item {
+        min-width: 0;
+        padding: .75rem .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 11px;
+        background: var(--secondary);
+      }
+      .as-correlation__history-header {
+        display: flex;
+        align-items: baseline;
         justify-content: space-between;
         gap: .75rem;
-        margin-top: .9rem;
-        padding-top: .8rem;
-        border-top: 1px solid var(--as-border);
+      }
+      .as-correlation__history-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .35rem 1rem;
+        margin-top: .35rem;
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+      }
+      .as-correlation__history-note {
+        margin-top: .55rem !important;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .as-correlation__pagination {
         display: flex;
@@ -463,11 +546,18 @@ export default RouteTemplate(
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       }
+      @media (max-width: 1100px) {
+        .as-correlation__review-form {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .as-correlation__review-save { align-self: end; }
+      }
       @media (max-width: 900px) {
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__filters { grid-template-columns: 1fr 1fr; }
         .as-correlation__candidate-meta { grid-template-columns: 1fr; }
+        .as-correlation__investigation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__group-accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__temporal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__temporal-list { grid-template-columns: 1fr; }
@@ -480,7 +570,9 @@ export default RouteTemplate(
         .as-correlation__metrics,
         .as-correlation__schedule-summary,
         .as-correlation__filters,
-        .as-correlation__accounts-grid { grid-template-columns: 1fr; }
+        .as-correlation__accounts-grid,
+        .as-correlation__review-form,
+        .as-correlation__investigation-summary { grid-template-columns: 1fr; }
         .as-correlation__group-summary,
         .as-correlation__candidate-summary-line { align-items: flex-start; }
         .as-correlation__group-accounts { grid-template-columns: 1fr; }

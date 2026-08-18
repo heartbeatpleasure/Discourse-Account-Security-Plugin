@@ -27,6 +27,7 @@ nl:
     account_security_user_notes_enabled: "Voeg één beknopte User Note toe bij een geëscaleerd High/Critical-event wanneer de Discourse User Notes-plugin beschikbaar is. Standaard UIT. De notitie bevat geen ruw IP-adres of providerscore."
     account_security_temporary_ip_blocks_enabled: "Sta beheerders toe om vanuit geschikte High/Critical-events expliciete tijdelijke Discourse IP-blokkades aan te maken. Standaard UIT. Account Security neemt nooit een bestaande screeningregel over."
     account_security_staff_notifications_enabled: "Stuur per kwalificerend incident één privébericht vanuit het systeemaccount naar de ingestelde staffgroepen. Standaard UIT."
+    account_security_correlation_notifications_enabled: "Stuur gededupliceerde staff-privéberichten bij nieuwe realtime Sterke/Zeer sterke accountcorrelatiebevindingen. Standaard UIT. Volledige handmatige/geplande historische scans veroorzaken nooit een notificatiestroom."
     account_security_notification_groups: "Groepen die Account Security-incidentberichten ontvangen wanneer staffnotificaties zijn ingeschakeld."
     account_security_notification_include_ip: "Neem het exacte IP-adres op in incidentberichten. Standaard UIT; de eventdetailpagina blijft de aangewezen plaats om het IP te bekijken."
     account_security_daily_check_budget: "Lokale veiligheidslimiet voor AbuseIPDB CHECK-verzoeken per UTC-dag."
@@ -56,6 +57,7 @@ nl:
         duplicate: "Dit trusted network bestaat al."
       correlations:
         disabled: "Accountcorrelatie is uitgeschakeld in de instellingen."
+        review_note_required: "Voeg een onderzoeksnotitie toe voordat je deze classificatie opslaat."
       events:
         user_note_unavailable: "Voor dit event kan geen User Note worden aangemaakt."
         existing_ip_screening: "Voor dit adres geldt al een Discourse IP-screeningregel. Account Security vervangt deze niet en neemt deze niet over."
@@ -64,6 +66,26 @@ nl:
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} is geëscaleerd voor staffbeoordeling met ernst %{severity}. Dit securitysignaal stelt op zichzelf geen misbruik door het account vast."
+    correlation_notification:
+      title: "Account Security: %{confidence} accountcorrelatie"
+      unknown_user: "Onbekend account"
+      confidences:
+        strong: "Sterk"
+        very_strong: "Zeer sterk"
+      body: |-
+        Account Security heeft een nieuwe of duidelijk sterkere realtime accountcorrelatiebevinding gevonden.
+
+        - Accounts: %{user_a} ↔ %{user_b}
+        - Huidige score: %{score}
+        - Confidence: %{confidence}
+        - Gedeelde exacte IP-adressen: %{shared_ips}
+        - Gedeelde publieke IP-adressen: %{public_ips}
+        - Gedeelde IP-adressen ondersteund door authenticatie-/sessiehistorie: %{auth_ips}
+
+        Bekijk de interne evidence en onderzoekshistorie: %{correlation_url}
+
+        Dit is uitsluitend een onderzoekssignaal. Geen account is automatisch geschorst, geblokkeerd, samengevoegd of anderszins gemodereerd.
+
     notification:
       title: "Account Security: %{severity}-incident"
       no_user: "Geen afzonderlijk account"

@@ -187,7 +187,7 @@ module ::AccountSecurity
         raise Discourse::InvalidParameters.new(:confidence)
       end
 
-      scope = AccountCorrelation.includes(:user_a, :user_b, :reviewed_by).order(score: :desc, last_seen_at: :desc, id: :desc)
+      scope = AccountCorrelation.includes(:user_a, :user_b, :reviewed_by, :primary_user).order(score: :desc, last_seen_at: :desc, id: :desc)
       scope = scope.where(status: status) if status.present?
       scope = scope.where(confidence: confidence) if confidence.present?
       if search.present?
@@ -207,7 +207,8 @@ module ::AccountSecurity
       ).exists?
       max_page = [(total.to_f / per_page).ceil, 1].max
       page = [page, max_page].min
-      items = scope.offset((page - 1) * per_page).limit(per_page)
+      items = scope.offset((page - 1) * per_page).limit(per_page).to_a
+      review_history = CorrelationInvestigationService.history_for(items.map(&:id))
 
       render_json_dump(
         enabled: SiteSetting.account_security_account_correlation_enabled,
@@ -220,7 +221,7 @@ module ::AccountSecurity
         temporal_refresh_required: temporal_refresh_required,
         scan: AccountCorrelationScanner.status,
         schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
-        items: items.map { |item| serialize_correlation(item) },
+        items: items.map { |item| serialize_correlation(item, review_history: review_history[item.id]) },
       )
     end
 
@@ -230,21 +231,33 @@ module ::AccountSecurity
       correlation = find_correlation!
       status = params.require(:status).to_s
       raise Discourse::InvalidParameters.new(:status) unless AccountCorrelation::STATUSES.include?(status)
-      require_confirmation! if status == "confirmed_duplicate"
 
-      reason = clean_optional(params[:resolution_reason], 240)
-      correlation.update!(
+      note = clean_optional(params[:review_note].presence || params[:resolution_reason], 1_000)
+      if status != correlation.status && CorrelationInvestigationService.required_note_for?(status) && note.blank?
+        return render_json_error(
+          I18n.t("admin.account_security.correlations.review_note_required"),
+          status: :unprocessable_entity,
+        )
+      end
+
+      correlation = CorrelationInvestigationService.review!(
+        correlation: correlation,
+        actor: current_user,
         status: status,
-        reviewed_by_id: current_user.id,
-        reviewed_at: Time.zone.now,
-        resolution_reason: reason,
+        note: note,
+        primary_user_id: params[:primary_user_id],
+        confirmed: params[:confirmed] == true || params[:confirmed].to_s == "true",
       )
       StaffAudit.log!(
         actor: current_user,
         action: "account_correlation_review_changed",
         details: { correlation_id: correlation.id, status: status },
       )
-      render_json_dump(success: true, item: serialize_correlation(correlation.reload))
+      history = CorrelationInvestigationService.history_for([correlation.id])[correlation.id]
+      render_json_dump(
+        success: true,
+        item: serialize_correlation(correlation, review_history: history),
+      )
     end
 
     def rebuild_correlations
@@ -504,7 +517,7 @@ module ::AccountSecurity
       }
     end
 
-    def serialize_correlation(item)
+    def serialize_correlation(item, review_history: nil)
       evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
       {
         id: item.id,
@@ -518,6 +531,8 @@ module ::AccountSecurity
         user_a: serialize_correlation_user(item.user_a),
         user_b: serialize_correlation_user(item.user_b),
         reviewed_by: item.reviewed_by && { id: item.reviewed_by.id, username: item.reviewed_by.username },
+        primary_user: item.primary_user && serialize_correlation_user(item.primary_user),
+        review_history: Array(review_history).map { |review| serialize_correlation_review(review) },
         evidence: {
           scoring_version: evidence["scoring_version"].to_i,
           shared_registration_ip: evidence["shared_registration_ip"] == true,
@@ -564,6 +579,20 @@ module ::AccountSecurity
           temporal_score_effect: evidence["temporal_score_effect"] == "none" ? "none" : nil,
           raw_user_agent_stored: false,
         },
+      }
+    end
+
+
+    def serialize_correlation_review(review)
+      {
+        id: review.id,
+        action: review.action,
+        from_status: review.from_status,
+        to_status: review.to_status,
+        note: review.note,
+        created_at: review.created_at&.iso8601,
+        actor: review.actor_user && { id: review.actor_user.id, username: review.actor_user.username },
+        primary_user: review.primary_user && { id: review.primary_user.id, username: review.primary_user.username },
       }
     end
 

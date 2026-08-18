@@ -27,6 +27,7 @@ module ::AccountSecurity
           browser_continuity_enabled: SiteSetting.account_security_browser_continuity_enabled,
           correlation_auto_scan_frequency: SiteSetting.account_security_correlation_auto_scan_frequency,
           staff_notifications_enabled: SiteSetting.account_security_staff_notifications_enabled,
+          correlation_notifications_enabled: SiteSetting.account_security_correlation_notifications_enabled,
           notification_groups_configured: IncidentNotifier.notification_group_names.any?,
           user_notes_enabled: SiteSetting.account_security_user_notes_enabled,
           temporary_ip_blocks_enabled: SiteSetting.account_security_temporary_ip_blocks_enabled,
