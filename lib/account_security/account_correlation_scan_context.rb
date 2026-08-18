@@ -5,6 +5,8 @@ require "set"
 
 module ::AccountSecurity
   class AccountCorrelationScanContext
+    MAX_BROWSER_SWITCH_ROWS = 100_000
+
     attr_reader :diagnostics
 
     def initialize(cutoff: SessionSignatureRecorder.retention_cutoff)
@@ -19,18 +21,26 @@ module ::AccountSecurity
       @browser_tokens_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
       @browser_token_users = Hash.new { |hash, token| hash[token] = Set.new }
       @browser_meta_by_user = Hash.new { |hash, user_id| hash[user_id] = {} }
+      @browser_switch_rows_by_token = Hash.new { |hash, token| hash[token] = [] }
+      @browser_switch_history_complete = true
       @trusted_networks = load_trusted_networks
       @diagnostics = {
         supplemental_network_relations: 0,
         supplemental_signature_relations: 0,
         supplemental_browser_relations: 0,
+        browser_switch_rows: 0,
+        browser_switch_rows_truncated: false,
+        browser_switch_history_complete: true,
         network_pairs_added: 0,
         signature_pairs_added: 0,
       }
 
       load_networks!
       load_signatures!
-      load_browser_continuity! if SiteSetting.account_security_browser_continuity_enabled
+      if SiteSetting.account_security_browser_continuity_enabled
+        load_browser_continuity!
+        load_browser_switches!
+      end
     end
 
     def add_candidate_pairs!(pairs, max_group_users:, max_pairs:)
@@ -84,6 +94,11 @@ module ::AccountSecurity
         @browser_meta_by_user[user_b_id],
       )
       max_browser_users = shared_browser_tokens.map { |token| @browser_token_users[token].length }.max.to_i
+      browser_switch_rows = shared_browser_tokens.flat_map { |token| @browser_switch_rows_by_token[token] }
+      browser_switch_summary =
+        BrowserContinuityRecorder
+          .switch_summary_from_rows(browser_switch_rows, user_a_id, user_b_id)
+          .merge(account_switch_history_complete: @browser_switch_history_complete)
       shared_network_user_counts = shared_networks.index_with { |network| @network_users[network].length }
       max_network_users = shared_network_user_counts.values.max.to_i
 
@@ -102,6 +117,13 @@ module ::AccountSecurity
         "repeated_browser_continuity_count" => browser_summary[:repeated_count],
         "browser_continuity_paired_observations" => browser_summary[:paired_observations],
         "browser_continuity_span_days" => browser_summary[:max_span_days],
+        "browser_account_switch_count" => browser_switch_summary[:account_switch_count].to_i,
+        "browser_account_switch_closest_gap_seconds" => browser_switch_summary[:account_switch_closest_gap_seconds],
+        "browser_account_switch_within_1h_count" => browser_switch_summary[:account_switch_within_1h_count].to_i,
+        "browser_account_switch_within_6h_count" => browser_switch_summary[:account_switch_within_6h_count].to_i,
+        "browser_account_switch_within_24h_count" => browser_switch_summary[:account_switch_within_24h_count].to_i,
+        "browser_account_switch_within_7d_count" => browser_switch_summary[:account_switch_within_7d_count].to_i,
+        "browser_account_switch_history_complete" => browser_switch_summary[:account_switch_history_complete] == true,
         "max_shared_network_users" => max_network_users,
         # Internal scan-only input used by AccountCorrelationService to derive a
         # v3-ready network signal that does not double count exact-IP overlap.
@@ -177,6 +199,35 @@ module ::AccountSecurity
       Rails.logger.warn("[account_security] correlation scan browser-continuity preload failed class=#{e.class}")
     end
 
+
+    def load_browser_switches!
+      return unless defined?(SessionObservation)
+
+      shared_tokens = @browser_token_users.filter_map do |token, users|
+        token if users.length.between?(2, BrowserContinuityRecorder::MAX_GROUP_USERS)
+      end
+      return if shared_tokens.empty?
+
+      rows =
+        SessionObservation
+          .where(browser_token_hash: shared_tokens)
+          .where("observed_at >= ?", BrowserContinuityRecorder.retention_cutoff)
+          .order(:browser_token_hash, :observed_at, :id)
+          .limit(MAX_BROWSER_SWITCH_ROWS + 1)
+          .pluck(:browser_token_hash, :user_id, :observed_at)
+      if rows.length > MAX_BROWSER_SWITCH_ROWS
+        @browser_switch_history_complete = false
+        diagnostics[:browser_switch_rows_truncated] = true
+        rows = rows.first(MAX_BROWSER_SWITCH_ROWS)
+      end
+      rows.each { |row| @browser_switch_rows_by_token[row[0].to_s] << row }
+      diagnostics[:browser_switch_rows] = rows.length
+      diagnostics[:browser_switch_history_complete] = @browser_switch_history_complete
+    rescue ActiveRecord::StatementInvalid => e
+      @browser_switch_history_complete = false
+      diagnostics[:browser_switch_history_complete] = false
+      Rails.logger.warn("[account_security] correlation scan browser-switch preload failed class=#{e.class}")
+    end
 
     def observation_summary(keys, meta_a, meta_b)
       repeated_count = 0

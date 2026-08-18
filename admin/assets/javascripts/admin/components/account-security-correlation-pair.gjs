@@ -173,14 +173,23 @@ export default class AccountSecurityCorrelationPair extends Component {
           </div>
         </div>
         <div class="as-correlation__badges">
-          <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{@item.score}}</span>
-          <span class="as-correlation__badge">{{@item.confidence_label}}</span>
+          {{#if @item.context_only}}
+            <span class="as-correlation__badge">{{@item.context_only_label}}</span>
+          {{else}}
+            <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{@item.score}}</span>
+            <span class="as-correlation__badge">{{@item.confidence_label}}</span>
+          {{/if}}
           <span class="as-correlation__badge">{{@item.status_label}}</span>
         </div>
         <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
       </summary>
 
       <div class="as-correlation__candidate-body">
+        {{#if @item.context_only}}
+          <div class="as-correlation__continuity-note" style="margin-top: .85rem;">
+            <strong>{{@item.context_only_label}}</strong> · {{i18n "admin.account_security.correlations.context_only_description"}}
+          </div>
+        {{/if}}
         <div class="as-correlation__accounts-grid">
           {{#if @item.user_a}}
             <div class="as-correlation__account-card">
@@ -333,6 +342,8 @@ export default class AccountSecurityCorrelationPair extends Component {
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_grouped_client_signatures"}}</div><div class="as-correlation__value">{{@item.evidence.client_signature_group_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_grouped_client_signatures"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_client_signature_group_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_browser"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_browser_continuity_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.browser_switch_count"}}</div><div class="as-correlation__value">{{@item.evidence.browser_account_switch_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.browser_switch_closest"}}</div><div class="as-correlation__value">{{@item.browser_account_switch_closest_gap_display}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_session"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_shared_session_signature_count}}</div></div>
           </div>
 

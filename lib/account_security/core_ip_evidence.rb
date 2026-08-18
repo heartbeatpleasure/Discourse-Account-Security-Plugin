@@ -6,9 +6,10 @@ module ::AccountSecurity
   module CoreIpEvidence
     module_function
 
-    SOURCES = %w[registration current history auth_session active_session].freeze
+    SOURCES = %w[registration current history auth_session active_session session_observation].freeze
     MAX_STORED_SHARED_IPS = 12
     MAX_AUTH_INDEX_ROWS = 100_000
+    MAX_SESSION_OBSERVATION_INDEX_ROWS = 100_000
     MAX_LARGE_GROUP_SUMMARIES = 12
 
     class ScanIndex
@@ -25,6 +26,7 @@ module ::AccountSecurity
           history_rows: 0,
           auth_session_rows: 0,
           active_session_rows: 0,
+          session_observation_rows: 0,
           exact_ip_groups: 0,
           public_ip_groups: 0,
           nonpublic_ip_groups: 0,
@@ -32,6 +34,7 @@ module ::AccountSecurity
           large_ip_group_summaries: [],
           exact_ip_pairs_generated: 0,
           auth_log_truncated: false,
+          session_observation_truncated: false,
         }
       end
 
@@ -170,6 +173,22 @@ module ::AccountSecurity
           .each { |user_id, ip| index.add(user_id, ip, "active_session") }
       end
 
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        rows =
+          SessionObservation
+            .where(user_id: user_ids)
+            .where("observed_at >= ?", session_observation_cutoff)
+            .group(:user_id, :ip_address)
+            .order(Arel.sql("MAX(observed_at) DESC"), :user_id, :ip_address)
+            .limit(MAX_SESSION_OBSERVATION_INDEX_ROWS + 1)
+            .pluck(:user_id, :ip_address)
+        if rows.length > MAX_SESSION_OBSERVATION_INDEX_ROWS
+          index.diagnostics[:session_observation_truncated] = true
+          rows = rows.first(MAX_SESSION_OBSERVATION_INDEX_ROWS)
+        end
+        rows.each { |user_id, ip| index.add(user_id, ip, "session_observation") }
+      end
+
       index
     rescue ActiveRecord::StatementInvalid => e
       Rails.logger.warn("[account_security] core IP scan index failed class=#{e.class}")
@@ -192,6 +211,14 @@ module ::AccountSecurity
       end
       if defined?(::UserAuthToken)
         append_ids!(ids, ::UserAuthToken.unexpired.where(client_ip: ip, user_id: eligible_ids), :user_id, max_group_users)
+      end
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        append_ids!(
+          ids,
+          SessionObservation.where(ip_address: ip, user_id: eligible_ids).where("observed_at >= ?", session_observation_cutoff),
+          :user_id,
+          max_group_users,
+        )
       end
 
       ids.delete(current_user_id.to_i)
@@ -253,6 +280,15 @@ module ::AccountSecurity
           .distinct
           .pluck(:client_ip)
           .each { |ip| add_source!(data, ip, "active_session") }
+      end
+
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        SessionObservation
+          .where(user_id: user_id)
+          .where("observed_at >= ?", session_observation_cutoff)
+          .distinct
+          .pluck(:ip_address)
+          .each { |ip| add_source!(data, ip, "session_observation") }
       end
 
       data
@@ -325,7 +361,19 @@ module ::AccountSecurity
       append_ids!(ids, ::UserIpAddressHistory.where(ip_address: ip, user_id: eligible_ids), :user_id, nil) if defined?(::UserIpAddressHistory)
       append_ids!(ids, ::UserAuthTokenLog.where(client_ip: ip, action: "generate", user_id: eligible_ids), :user_id, nil) if defined?(::UserAuthTokenLog)
       append_ids!(ids, ::UserAuthToken.unexpired.where(client_ip: ip, user_id: eligible_ids), :user_id, nil) if defined?(::UserAuthToken)
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        append_ids!(
+          ids,
+          SessionObservation.where(ip_address: ip, user_id: eligible_ids).where("observed_at >= ?", session_observation_cutoff),
+          :user_id,
+          nil,
+        )
+      end
       ids.length
+    end
+
+    def session_observation_cutoff
+      SiteSetting.account_security_correlation_retention_days.to_i.clamp(30, 730).days.ago
     end
 
     def eligible_user_ids_scope

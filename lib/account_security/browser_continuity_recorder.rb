@@ -18,17 +18,28 @@ module ::AccountSecurity
       return nil unless enabled?
       return nil if user.blank? || !user.human? || user.staged? || user.id.to_i <= 0
 
+      digest = ensure_token_hash!(cookies: cookies)
+      return nil if digest.blank?
+
+      Jobs.enqueue(:account_security_record_browser_continuity, user_id: user.id, token_hash: digest)
+      digest
+    rescue StandardError => e
+      Rails.logger.warn("[account_security] browser continuity capture failed class=#{e.class}")
+      nil
+    end
+
+
+    def ensure_token_hash!(cookies:)
+      return nil unless enabled?
+
       signed_cookies = cookies&.signed
       return nil if signed_cookies.blank?
 
       token = signed_cookies[COOKIE_NAME].to_s
       token = SecureRandom.urlsafe_base64(TOKEN_BYTES, false) unless valid_token?(token)
 
-      # Refresh the expiry after each successful login while retaining the same
-      # random token. The browser may still discard it (private browsing,
-      # clearing site data, privacy controls, profile reset); that is why this
-      # signal is strictly positive-only and supplemental; it never creates a
-      # correlation candidate by itself.
+      # Refresh the expiry while retaining the same random browser-profile token.
+      # A missing or different token is never interpreted negatively.
       signed_cookies[COOKIE_NAME] = {
         value: token,
         expires: cookie_lifetime.from_now,
@@ -38,15 +49,13 @@ module ::AccountSecurity
         same_site: :lax,
       }
 
-      digest = token_hash(token)
-      Jobs.enqueue(:account_security_record_browser_continuity, user_id: user.id, token_hash: digest)
-      digest
+      token_hash(token)
     rescue StandardError => e
-      Rails.logger.warn("[account_security] browser continuity capture failed class=#{e.class}")
+      Rails.logger.warn("[account_security] browser continuity cookie refresh failed class=#{e.class}")
       nil
     end
 
-    def record!(user_id:, token_hash:, observed_at: Time.zone.now)
+    def record!(user_id:, token_hash:, observed_at: Time.zone.now, recalculate: true)
       return nil unless enabled?
       return nil unless valid_hash?(token_hash)
 
@@ -65,7 +74,7 @@ module ::AccountSecurity
       end
       record.save!
 
-      recalculate_related_pairs!(user.id, token_hash, observed_at)
+      recalculate_related_pairs!(user.id, token_hash, observed_at) if recalculate
       record
     rescue ActiveRecord::RecordNotUnique
       retry_record = BrowserContinuity.find_by(user_id: user_id.to_i, token_hash: token_hash)
@@ -74,7 +83,7 @@ module ::AccountSecurity
         observation_count: retry_record.observation_count.to_i + 1,
         updated_at: Time.zone.now,
       )
-      recalculate_related_pairs!(user_id.to_i, token_hash, observed_at)
+      recalculate_related_pairs!(user_id.to_i, token_hash, observed_at) if recalculate
       retry_record
     rescue StandardError => e
       Rails.logger.warn("[account_security] browser continuity record failed class=#{e.class}")
@@ -88,6 +97,13 @@ module ::AccountSecurity
         repeated_count: 0,
         paired_observations: 0,
         max_span_days: 0,
+        account_switch_count: 0,
+        account_switch_closest_gap_seconds: nil,
+        account_switch_within_1h_count: 0,
+        account_switch_within_6h_count: 0,
+        account_switch_within_24h_count: 0,
+        account_switch_within_7d_count: 0,
+        account_switch_history_complete: false,
       }
       return empty unless enabled?
 
@@ -139,15 +155,84 @@ module ::AccountSecurity
         end
       end
 
+      switch_summary = account_switch_summary(user_a_id, user_b_id, shared)
+
       {
         count: shared.length,
         max_users: max_users,
         repeated_count: repeated_count,
         paired_observations: paired_observations,
         max_span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
-      }
+      }.merge(switch_summary)
     rescue ActiveRecord::StatementInvalid
-      empty || { count: 0, max_users: 0, repeated_count: 0, paired_observations: 0, max_span_days: 0 }
+      empty
+    end
+
+    def account_switch_summary(user_a_id, user_b_id, token_hashes = nil)
+      empty = empty_switch_summary
+      return empty unless defined?(SessionObservation)
+
+      tokens = Array(token_hashes).map(&:to_s).select { |value| valid_hash?(value) }.uniq
+      return empty if tokens.empty?
+
+      rows =
+        SessionObservation
+          .where(user_id: [user_a_id.to_i, user_b_id.to_i], browser_token_hash: tokens)
+          .where("observed_at >= ?", retention_cutoff)
+          .order(:browser_token_hash, :observed_at, :id)
+          .limit(10_001)
+          .pluck(:browser_token_hash, :user_id, :observed_at)
+      complete = rows.length <= 10_000
+      rows = rows.first(10_000) unless complete
+
+      switch_summary_from_rows(rows, user_a_id, user_b_id).merge(account_switch_history_complete: complete)
+    rescue ActiveRecord::StatementInvalid
+      empty
+    end
+
+    def switch_summary_from_rows(rows, user_a_id, user_b_id)
+      pair_ids = [user_a_id.to_i, user_b_id.to_i].sort
+      gaps = []
+
+      Array(rows).group_by { |row| row[0].to_s }.each_value do |token_rows|
+        collapsed = []
+        token_rows.sort_by { |row| row[2] }.each do |_token, user_id, observed_at|
+          user_id = user_id.to_i
+          next unless pair_ids.include?(user_id) && observed_at.present?
+
+          if collapsed.last&.dig(:user_id) == user_id
+            collapsed[-1] = { user_id: user_id, at: observed_at }
+          else
+            collapsed << { user_id: user_id, at: observed_at }
+          end
+        end
+
+        collapsed.each_cons(2) do |left, right|
+          next if left[:user_id] == right[:user_id]
+          gaps << (right[:at] - left[:at]).abs.to_i
+        end
+      end
+
+      {
+        account_switch_count: gaps.length,
+        account_switch_closest_gap_seconds: gaps.min,
+        account_switch_within_1h_count: gaps.count { |gap| gap <= 1.hour.to_i },
+        account_switch_within_6h_count: gaps.count { |gap| gap <= 6.hours.to_i },
+        account_switch_within_24h_count: gaps.count { |gap| gap <= 1.day.to_i },
+        account_switch_within_7d_count: gaps.count { |gap| gap <= 7.days.to_i },
+      }
+    end
+
+    def empty_switch_summary
+      {
+        account_switch_count: 0,
+        account_switch_closest_gap_seconds: nil,
+        account_switch_within_1h_count: 0,
+        account_switch_within_6h_count: 0,
+        account_switch_within_24h_count: 0,
+        account_switch_within_7d_count: 0,
+        account_switch_history_complete: false,
+      }
     end
 
     def cookie_lifetime

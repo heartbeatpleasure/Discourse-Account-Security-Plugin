@@ -199,8 +199,11 @@ module ::AccountSecurity
 
       total = scope.count
       scoring_refresh_required = AccountCorrelation.where(
-        "COALESCE((evidence ->> 'scoring_version')::integer, 0) < ?",
-        AccountCorrelationPolicy::SCORING_VERSION,
+        "COALESCE((evidence ->> 'scoring_version')::integer, 0) < :version OR " \
+          "(COALESCE((evidence ->> 'scoring_version')::integer, 0) = :version AND " \
+          "COALESCE((evidence ->> 'scoring_revision')::integer, 0) < :revision)",
+        version: AccountCorrelationPolicy::SCORING_VERSION,
+        revision: AccountCorrelationPolicy::SCORING_REVISION,
       ).exists?
       temporal_refresh_required = AccountCorrelation.where(
         "COALESCE((evidence ->> 'temporal_evidence_version')::integer, 0) < ?",
@@ -246,6 +249,103 @@ module ::AccountSecurity
 
     def correlation_scan_status
       render_json_dump(scan: serialize_correlation_scan_poll(AccountCorrelationScanner.status))
+    end
+
+    def scoring_calibration
+      render_json_dump(scoring_calibration_payload)
+    end
+
+    def update_scoring_calibration
+      rate_limit!("scoring-calibration-save", 10)
+      profile = ScoringCalibration.save_draft!(calibration_profile_params)
+      StaffAudit.log!(
+        actor: current_user,
+        action: "scoring_calibration_draft_saved",
+        details: { scoring_version: AccountCorrelationPolicy::SCORING_VERSION, scoring_revision: AccountCorrelationPolicy::SCORING_REVISION },
+      )
+      render_json_dump(scoring_calibration_payload.merge(draft_profile: profile))
+    end
+
+    def reset_scoring_calibration
+      rate_limit!("scoring-calibration-reset", 5)
+      profile = ScoringCalibration.reset_draft!
+      StaffAudit.log!(
+        actor: current_user,
+        action: "scoring_calibration_draft_reset",
+        details: { scoring_version: AccountCorrelationPolicy::SCORING_VERSION, scoring_revision: AccountCorrelationPolicy::SCORING_REVISION },
+      )
+      render_json_dump(scoring_calibration_payload.merge(draft_profile: profile))
+    end
+
+    def preview_scoring_calibration
+      rate_limit!("scoring-calibration-preview", 6)
+      submitted = params[:profile].present? ? calibration_profile_params : ScoringCalibration.draft
+      profile = ScoringCalibration.validated_profile(submitted)
+      requested_limit = positive_integer_value(params[:limit]) || ScoringCalibration::DEFAULT_PREVIEW_ROWS
+      limit = [requested_limit, ScoringCalibration::MAX_PREVIEW_ROWS].min
+      total = AccountCorrelation.count
+      items =
+        AccountCorrelation
+          .includes(:user_a, :user_b)
+          .order(last_seen_at: :desc, id: :desc)
+          .limit(limit)
+          .to_a
+
+      current_distribution = Hash.new(0)
+      preview_distribution = Hash.new(0)
+      review_matrix = Hash.new { |hash, status| hash[status] = Hash.new(0) }
+      changed_count = 0
+      confidence_changed_count = 0
+      context_only_count = 0
+      changes = []
+
+      items.each do |item|
+        evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
+        preview_result = AccountCorrelationPolicy.score_with_breakdown(evidence, profile: profile)
+        preview_score = preview_result[:score]
+        preview_confidence = AccountCorrelationPolicy.confidence(preview_score, profile: profile)
+        current_confidence = AccountCorrelation::CONFIDENCES.include?(item.confidence.to_s) ? item.confidence.to_s : "weak"
+        current_distribution[current_confidence] += 1
+        preview_distribution[preview_confidence] += 1
+        review_matrix[item.status.to_s][preview_confidence] += 1
+        delta = preview_score.to_i - item.score.to_i
+        changed_count += 1 unless delta.zero?
+        confidence_changed_count += 1 if current_confidence != preview_confidence
+        context_only = AccountCorrelationPolicy.context_only?(evidence, profile: profile)
+        context_only_count += 1 if context_only
+
+        if !delta.zero? || current_confidence != preview_confidence
+          changes << {
+            id: item.id,
+            user_a: item.user_a && { id: item.user_a.id, username: item.user_a.username },
+            user_b: item.user_b && { id: item.user_b.id, username: item.user_b.username },
+            status: item.status,
+            current_score: item.score.to_i,
+            preview_score: preview_score.to_i,
+            delta: delta,
+            current_confidence: current_confidence,
+            preview_confidence: preview_confidence,
+            context_only: context_only,
+            preview_breakdown: preview_result[:breakdown],
+          }
+        end
+      end
+
+      render_json_dump(
+        preview_only: true,
+        profile: profile,
+        processed: items.length,
+        total: total,
+        truncated: total > items.length,
+        limit: limit,
+        changed_count: changed_count,
+        confidence_changed_count: confidence_changed_count,
+        context_only_count: context_only_count,
+        current_distribution: ordered_confidence_distribution(current_distribution),
+        preview_distribution: ordered_confidence_distribution(preview_distribution),
+        review_matrix: review_matrix.transform_values { |counts| ordered_confidence_distribution(counts) },
+        largest_changes: changes.sort_by { |row| [-row[:delta].abs, row[:id].to_i] }.first(50),
+      )
     end
 
     def update_correlation
@@ -435,6 +535,29 @@ module ::AccountSecurity
     def require_confirmation!
       confirmed = params[:confirmed] == true || params[:confirmed].to_s == "true"
       raise Discourse::InvalidParameters.new(:confirmed) unless confirmed
+    end
+
+    def scoring_calibration_payload
+      {
+        preview_only: true,
+        scoring_version: AccountCorrelationPolicy::SCORING_VERSION,
+        scoring_revision: AccountCorrelationPolicy::SCORING_REVISION,
+        profile_schema_version: ScoringCalibration::PROFILE_SCHEMA_VERSION,
+        live_profile: ScoringCalibration::DEFAULT_PROFILE,
+        draft_profile: ScoringCalibration.draft,
+        descriptors: ScoringCalibration.descriptors,
+        default_preview_rows: ScoringCalibration::DEFAULT_PREVIEW_ROWS,
+        max_preview_rows: ScoringCalibration::MAX_PREVIEW_ROWS,
+      }
+    end
+
+    def calibration_profile_params
+      value = params.require(:profile)
+      value.respond_to?(:to_unsafe_h) ? value.to_unsafe_h : value.to_h
+    end
+
+    def ordered_confidence_distribution(counts)
+      %w[weak moderate strong very_strong].index_with { |key| counts[key].to_i }
     end
 
     def find_event!
@@ -640,6 +763,8 @@ module ::AccountSecurity
         score: item.score.to_i,
         confidence: item.confidence,
         status: item.status,
+        context_only: AccountCorrelationPolicy.context_only?(evidence),
+        context_only_reason: AccountCorrelationPolicy.context_only?(evidence) ? AccountCorrelationPolicy.context_only_reason(evidence) : nil,
         first_seen_at: item.first_seen_at&.iso8601,
         last_seen_at: item.last_seen_at&.iso8601,
         reviewed_at: item.reviewed_at&.iso8601,
@@ -652,6 +777,7 @@ module ::AccountSecurity
         policy_actions: CorrelationPolicyActions.payload(item, note_actions: policy_action_state),
         evidence: {
           scoring_version: evidence["scoring_version"].to_i,
+          scoring_revision: evidence["scoring_revision"].to_i,
           shared_registration_ip: evidence["shared_registration_ip"] == true,
           shared_registration_ip_public: evidence["shared_registration_ip_public"] == true,
           shared_registration_ip_nonpublic: evidence["shared_registration_ip_nonpublic"] == true,
@@ -699,6 +825,13 @@ module ::AccountSecurity
           repeated_browser_continuity_count: evidence["repeated_browser_continuity_count"].to_i,
           browser_continuity_paired_observations: evidence["browser_continuity_paired_observations"].to_i,
           browser_continuity_span_days: evidence["browser_continuity_span_days"].to_i,
+          browser_account_switch_count: evidence["browser_account_switch_count"].to_i,
+          browser_account_switch_closest_gap_seconds: nonnegative_integer_or_nil(evidence["browser_account_switch_closest_gap_seconds"]),
+          browser_account_switch_within_1h_count: evidence["browser_account_switch_within_1h_count"].to_i,
+          browser_account_switch_within_6h_count: evidence["browser_account_switch_within_6h_count"].to_i,
+          browser_account_switch_within_24h_count: evidence["browser_account_switch_within_24h_count"].to_i,
+          browser_account_switch_within_7d_count: evidence["browser_account_switch_within_7d_count"].to_i,
+          browser_account_switch_history_complete: evidence["browser_account_switch_history_complete"] == true,
           browser_continuity_positive_only: evidence["browser_continuity_positive_only"] == true,
           registration_delta_minutes: evidence["registration_delta_minutes"].to_i,
           max_shared_network_users: evidence["max_shared_network_users"].to_i,
@@ -707,6 +840,9 @@ module ::AccountSecurity
           score_breakdown: serialize_score_breakdown(evidence["score_breakdown"]),
           temporal_evidence_version: evidence["temporal_evidence_version"].to_i,
           temporal_auth_history_complete: evidence["temporal_auth_history_complete"] == true,
+          session_observation_history_complete: evidence["session_observation_history_complete"] == true,
+          combined_session_login_history_complete: evidence["combined_session_login_history_complete"] == true,
+          session_observation_evidence_horizon_days: evidence["session_observation_evidence_horizon_days"].to_i,
           temporal_ip_population_complete: evidence["temporal_ip_population_complete"] == true,
           temporal_population_window_basis: evidence["temporal_population_window_basis"] == "closest_pair_midpoint" ? "closest_pair_midpoint" : nil,
           timed_shared_ip_count: evidence["timed_shared_ip_count"].to_i,

@@ -152,6 +152,13 @@ module ::AccountSecurity
           repeated_count: precomputed_supplemental["repeated_browser_continuity_count"].to_i,
           paired_observations: precomputed_supplemental["browser_continuity_paired_observations"].to_i,
           span_days: precomputed_supplemental["browser_continuity_span_days"].to_i,
+          account_switch_count: precomputed_supplemental["browser_account_switch_count"].to_i,
+          account_switch_closest_gap_seconds: precomputed_supplemental["browser_account_switch_closest_gap_seconds"],
+          account_switch_within_1h_count: precomputed_supplemental["browser_account_switch_within_1h_count"].to_i,
+          account_switch_within_6h_count: precomputed_supplemental["browser_account_switch_within_6h_count"].to_i,
+          account_switch_within_24h_count: precomputed_supplemental["browser_account_switch_within_24h_count"].to_i,
+          account_switch_within_7d_count: precomputed_supplemental["browser_account_switch_within_7d_count"].to_i,
+          account_switch_history_complete: precomputed_supplemental["browser_account_switch_history_complete"] == true,
         }
         network_user_counts =
           Hash(precomputed_supplemental["shared_network_user_counts"]).each_with_object({}) do |(network_key, count), memo|
@@ -242,6 +249,7 @@ module ::AccountSecurity
 
       {
         "scoring_version" => AccountCorrelationPolicy::SCORING_VERSION,
+        "scoring_revision" => AccountCorrelationPolicy::SCORING_REVISION,
         "shared_registration_ip" => registration_details.any?,
         "shared_registration_ip_public" => registration_details.any? { |detail| detail["public"] == true && detail["trusted"] != true },
         "shared_registration_ip_nonpublic" => registration_details.any? { |detail| detail["public"] != true },
@@ -292,6 +300,13 @@ module ::AccountSecurity
         "repeated_browser_continuity_count" => browser[:repeated_count].to_i,
         "browser_continuity_paired_observations" => browser[:paired_observations].to_i,
         "browser_continuity_span_days" => browser[:span_days].to_i,
+        "browser_account_switch_count" => browser[:account_switch_count].to_i,
+        "browser_account_switch_closest_gap_seconds" => browser[:account_switch_closest_gap_seconds],
+        "browser_account_switch_within_1h_count" => browser[:account_switch_within_1h_count].to_i,
+        "browser_account_switch_within_6h_count" => browser[:account_switch_within_6h_count].to_i,
+        "browser_account_switch_within_24h_count" => browser[:account_switch_within_24h_count].to_i,
+        "browser_account_switch_within_7d_count" => browser[:account_switch_within_7d_count].to_i,
+        "browser_account_switch_history_complete" => browser[:account_switch_history_complete] == true,
         "browser_continuity_positive_only" => true,
         "registration_delta_minutes" => registration_delta,
         "max_shared_network_users" => [max_network_users, exact_counts.max.to_i].max,
@@ -307,6 +322,9 @@ module ::AccountSecurity
       TemporalCorrelationEvidence.empty_evidence.merge(value.slice(
         "temporal_evidence_version",
         "temporal_auth_history_complete",
+        "session_observation_history_complete",
+        "combined_session_login_history_complete",
+        "session_observation_evidence_horizon_days",
         "temporal_ip_population_complete",
         "temporal_population_window_basis",
         "timed_shared_ip_count",
@@ -531,7 +549,7 @@ module ::AccountSecurity
 
     def historical_source?(detail)
       sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
-      (sources & %w[history auth_session active_session]).any?
+      (sources & %w[history auth_session active_session session_observation]).any?
     end
 
     def core_history_source?(detail)
@@ -541,7 +559,7 @@ module ::AccountSecurity
 
     def auth_source?(detail)
       sources = Array(detail["sources_a"]) | Array(detail["sources_b"])
-      (sources & %w[auth_session active_session]).any?
+      (sources & %w[auth_session active_session session_observation]).any?
     end
 
     def trusted_network?(network)

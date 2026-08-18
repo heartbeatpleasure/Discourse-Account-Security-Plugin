@@ -374,4 +374,38 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
 
     expect(described_class.score(legacy_noise)).to eq(described_class.score(base))
   end
+  it "adds positive same-browser persistence and switching weight without penalizing different browsers" do
+    shared_browser = {
+      "browser_continuity_count" => 1,
+      "max_browser_continuity_users" => 2,
+    }
+    repeated_browser = shared_browser.merge(
+      "repeated_browser_continuity_count" => 1,
+      "browser_continuity_paired_observations" => 4,
+      "browser_continuity_span_days" => 10,
+    )
+    switched_browser = repeated_browser.merge(
+      "browser_account_switch_count" => 3,
+      "browser_account_switch_closest_gap_seconds" => 2.hours.to_i,
+    )
+
+    expect(described_class.score(repeated_browser)).to be > described_class.score(shared_browser)
+    expect(described_class.score(switched_browser)).to be > described_class.score(repeated_browser)
+    expect(described_class.score(switched_browser)).to be <= 36
+    expect(described_class.score({ "browser_continuity_count" => 0 })).to eq(0)
+    expect(described_class.score({})).to eq(0)
+  end
+
+  it "labels non-scoring shared infrastructure as context-only rather than negative identity evidence" do
+    internal = {
+      "shared_exact_ip_count" => 1,
+      "shared_ip_details" => [
+        { "ip_address" => "10.0.3.1", "public" => false, "trusted" => false },
+      ],
+    }
+
+    expect(described_class.context_only?(internal)).to eq(true)
+    expect(described_class.context_only_reason(internal)).to eq("shared_internal_network")
+  end
+
 end

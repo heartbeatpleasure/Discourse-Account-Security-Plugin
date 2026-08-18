@@ -20,6 +20,8 @@ module ::AccountSecurity
       account_correlation_review_changed
       account_correlation_user_note_added
       account_correlation_scan_started
+      scoring_calibration_draft_saved
+      scoring_calibration_draft_reset
     ].freeze
 
     SAFE_DETAIL_KEYS = %i[
@@ -34,6 +36,8 @@ module ::AccountSecurity
       feed
       result
       correlation_id
+      scoring_version
+      scoring_revision
     ].freeze
 
     SAFE_TOKEN = /\A[a-z0-9_.:-]{1,80}\z/i

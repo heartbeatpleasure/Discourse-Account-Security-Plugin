@@ -36,8 +36,12 @@ export default class AccountSecurityCorrelationPairRow extends Component {
         {{/if}}
       </div>
       <div class="as-correlation__compact-pair-actions">
-        <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{@item.score}}</span>
-        <span class="as-correlation__badge">{{@item.confidence_label}}</span>
+        {{#if @item.context_only}}
+          <span class="as-correlation__badge">{{@item.context_only_label}}</span>
+        {{else}}
+          <span class="as-correlation__badge as-correlation__score">{{i18n "admin.account_security.correlations.score"}} {{@item.score}}</span>
+          <span class="as-correlation__badge">{{@item.confidence_label}}</span>
+        {{/if}}
         <span class="as-correlation__badge">{{@item.status_label}}</span>
       </div>
       <button

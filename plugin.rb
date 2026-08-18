@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.19.0
+# version: 0.20.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.19.0"
+  PLUGIN_VERSION = "0.20.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -39,9 +39,11 @@ after_initialize do
     app/models/account_security/notification_suppression.rb
     app/models/account_security/session_signature.rb
     app/models/account_security/browser_continuity.rb
+    app/models/account_security/session_observation.rb
     app/models/account_security/account_correlation.rb
     app/models/account_security/correlation_review.rb
     app/controllers/account_security/admin_controller.rb
+    app/controllers/account_security/session_observations_controller.rb
   ].each { |path| require_dependency File.expand_path(path, __dir__) }
 
   %w[
@@ -60,8 +62,10 @@ after_initialize do
     lib/account_security/network_context.rb
     lib/account_security/core_ip_evidence.rb
     lib/account_security/temporal_correlation_evidence.rb
+    lib/account_security/scoring_calibration.rb
     lib/account_security/account_correlation_policy.rb
     lib/account_security/account_correlation_service.rb
+    lib/account_security/session_observation_recorder.rb
     lib/account_security/correlation_investigation_service.rb
     lib/account_security/correlation_policy_actions.rb
     lib/account_security/account_correlation_scan_context.rb
@@ -84,6 +88,7 @@ after_initialize do
     app/jobs/regular/account_security_process_auth_abuse_cluster.rb
     app/jobs/regular/account_security_rebuild_correlations.rb
     app/jobs/regular/account_security_record_browser_continuity.rb
+    app/jobs/regular/account_security_record_session_observation.rb
     app/jobs/scheduled/account_security_auto_correlation_scan.rb
     app/jobs/scheduled/account_security_sync_tor_exit_list.rb
     app/jobs/scheduled/account_security_sync_abuseipdb_blacklist.rb
@@ -162,6 +167,7 @@ after_initialize do
     ::AccountSecurity::NotificationSuppression.where(created_by_id: user.id).update_all(created_by_id: nil)
     ::AccountSecurity::SessionSignature.where(user_id: user.id).delete_all
     ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
+    ::AccountSecurity::SessionObservation.where(user_id: user.id).delete_all
     correlation_ids = ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).pluck(:id)
     ::AccountSecurity::CorrelationReview.where(account_correlation_id: correlation_ids).delete_all if correlation_ids.any?
     ::AccountSecurity::CorrelationReview.where(actor_user_id: user.id).update_all(actor_user_id: nil)
@@ -180,6 +186,7 @@ after_initialize do
     # account itself is anonymized, regardless of whether core IP anonymization
     # was requested as part of the same operation.
     ::AccountSecurity::BrowserContinuity.where(user_id: user.id).delete_all
+    ::AccountSecurity::SessionObservation.where(user_id: user.id).delete_all
     correlation_ids = ::AccountSecurity::AccountCorrelation.where(user_a_id: user.id).or(::AccountSecurity::AccountCorrelation.where(user_b_id: user.id)).pluck(:id)
     ::AccountSecurity::CorrelationReview.where(account_correlation_id: correlation_ids).delete_all if correlation_ids.any?
     ::AccountSecurity::CorrelationReview.where(actor_user_id: user.id).update_all(actor_user_id: nil)
@@ -196,6 +203,9 @@ after_initialize do
   end
 
   Discourse::Application.routes.append do
+    post "/account-security/session-observation.json" => "account_security/session_observations#create",
+         defaults: { format: :json }
+
     %w[
       account-security
       account-security-events
@@ -236,6 +246,14 @@ after_initialize do
         defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/correlations/scan-status.json" => "account_security/admin#correlation_scan_status",
         defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/scoring-calibration.json" => "account_security/admin#scoring_calibration",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    put "/admin/plugins/account-security/scoring-calibration.json" => "account_security/admin#update_scoring_calibration",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    delete "/admin/plugins/account-security/scoring-calibration.json" => "account_security/admin#reset_scoring_calibration",
+           defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/scoring-calibration/preview.json" => "account_security/admin#preview_scoring_calibration",
+         defaults: { format: :json }, constraints: AdminConstraint.new
     put "/admin/plugins/account-security/correlations/:id.json" => "account_security/admin#update_correlation",
         defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/correlations/:id/duplicate-user-note.json" => "account_security/admin#add_correlation_duplicate_user_note",

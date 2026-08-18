@@ -20,6 +20,10 @@ RSpec.describe AccountSecurity::AdminController do
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/correlations.json", {}],
       [:get, "/admin/plugins/account-security/correlations/scan-status.json", {}],
+      [:get, "/admin/plugins/account-security/scoring-calibration.json", {}],
+      [:put, "/admin/plugins/account-security/scoring-calibration.json", { profile: {} }],
+      [:delete, "/admin/plugins/account-security/scoring-calibration.json", {}],
+      [:post, "/admin/plugins/account-security/scoring-calibration/preview.json", { profile: {} }],
       [:put, "/admin/plugins/account-security/correlations/1.json", { status: "monitor" }],
       [:post, "/admin/plugins/account-security/correlations/1/duplicate-user-note.json", { confirmed: true }],
       [:post, "/admin/plugins/account-security/correlations/rebuild.json", {}],
@@ -297,5 +301,56 @@ RSpec.describe AccountSecurity::AdminController do
     expect(maxmind).not_to have_key("longitude")
     expect(maxmind).not_to have_key("geoname_ids")
   end
+
+  it "previews and stores a calibration draft without changing live correlation records" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    user_a_id, user_b_id = [first.id, second.id].sort
+    evidence = {
+      "browser_continuity_count" => 1,
+      "max_browser_continuity_users" => 2,
+    }
+    live_score = AccountSecurity::AccountCorrelationPolicy.score(evidence)
+    correlation = AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: live_score,
+      confidence: AccountSecurity::AccountCorrelationPolicy.confidence(live_score),
+      status: "open",
+      evidence: evidence,
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    sign_in(admin)
+    draft = AccountSecurity::ScoringCalibration::DEFAULT_PROFILE.merge(
+      "browser_base_points" => 35,
+      "browser_cap" => 45,
+    )
+
+    put "/admin/plugins/account-security/scoring-calibration.json", params: { profile: draft }
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["preview_only"]).to eq(true)
+    expect(response.parsed_body.dig("draft_profile", "browser_base_points")).to eq(35)
+
+    post "/admin/plugins/account-security/scoring-calibration/preview.json",
+         params: { profile: draft, limit: 100 }
+    expect(response.status).to eq(200)
+    preview = response.parsed_body
+    expect(preview["preview_only"]).to eq(true)
+    change = preview.fetch("largest_changes").find { |row| row["id"] == correlation.id }
+    expect(change).to be_present
+    expect(change["preview_score"]).to be > live_score
+    expect(change["preview_breakdown"]).to be_present
+    expect(preview.dig("review_matrix", "open")).to be_present
+    expect(preview.dig("review_matrix", "open").values.sum).to eq(1)
+
+    correlation.reload
+    expect(correlation.score).to eq(live_score)
+    expect(correlation.confidence).to eq(AccountSecurity::AccountCorrelationPolicy.confidence(live_score))
+  end
+
 
 end

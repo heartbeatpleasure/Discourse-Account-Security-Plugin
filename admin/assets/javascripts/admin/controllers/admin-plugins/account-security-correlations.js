@@ -19,6 +19,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @tracked page = 1;
   @tracked activeView = "groups";
   @tracked viewInitialized = false;
+  @tracked calibrationOpen = false;
+  @tracked calibrationLoading = false;
+  @tracked calibrationSaving = false;
+  @tracked calibrationData;
+  @tracked calibrationFields = [];
+  @tracked calibrationPreview;
+  @tracked calibrationPreviewLimit = 2000;
 
   _scanPollTimer = null;
   _scanPollingActive = false;
@@ -35,6 +42,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.page = 1;
     this.activeView = "groups";
     this.viewInitialized = false;
+    this.calibrationOpen = false;
+    this.calibrationLoading = false;
+    this.calibrationSaving = false;
+    this.calibrationData = undefined;
+    this.calibrationFields = [];
+    this.calibrationPreview = undefined;
+    this.calibrationPreviewLimit = 2000;
   }
 
   get isGroupsView() {
@@ -110,6 +124,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       "history",
       "auth_session",
       "active_session",
+      "session_observation",
     ];
     const key = allowed.includes(source) ? source : "history";
     return i18n(`admin.account_security.correlations.ip_sources.${key}`);
@@ -376,6 +391,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       confidence_label: i18n(
         `admin.account_security.correlations.confidences.${item.confidence}`
       ),
+      context_only_label: item.context_only
+        ? i18n(`admin.account_security.correlations.context_only_reasons.${item.context_only_reason || "non_scoring_context"}`)
+        : null,
       status_label: i18n(
         `admin.account_security.correlations.statuses.${item.status}`
       ),
@@ -403,6 +421,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       public_ip_transition_closest_gap_display: this.temporalGapLabel(
         evidence.public_ip_transition_closest_gap_seconds
       ),
+      browser_account_switch_closest_gap_display: this.temporalGapLabel(
+        evidence.browser_account_switch_closest_gap_seconds
+      ),
       has_temporal_evidence: Number(evidence.timed_shared_ip_count || 0) > 0,
       auth_proximity_details: (evidence.auth_proximity_details || []).map(
         (detail) => this.decorateAuthProximityDetail(detail)
@@ -415,9 +436,11 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         Number(evidence.shared_auth_client_signature_count || 0) > 0 ||
         Number(evidence.public_ip_transition_pattern_count || 0) > 0 ||
         Number(evidence.repeated_browser_continuity_count || 0) > 0 ||
+        Number(evidence.browser_account_switch_count || 0) > 0 ||
         Number(evidence.repeated_shared_session_signature_count || 0) > 0,
       auth_pattern_history_incomplete:
         evidence.auth_pattern_history_complete !== true ||
+        evidence.combined_session_login_history_complete !== true ||
         evidence.core_auth_history_complete !== true ||
         evidence.exact_ip_population_complete !== true ||
         (Number(evidence.client_signature_group_count || 0) > 0 &&
@@ -448,6 +471,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ["diagnostics_history_rows", diagnostics.history_rows],
       ["diagnostics_auth_session_rows", diagnostics.auth_session_rows],
       ["diagnostics_active_session_rows", diagnostics.active_session_rows],
+      ["diagnostics_session_observation_rows", diagnostics.session_observation_rows],
+      ["diagnostics_browser_switch_rows", diagnostics.browser_switch_rows],
       ["diagnostics_exact_groups", diagnostics.exact_ip_groups],
       ["diagnostics_public_groups", diagnostics.public_ip_groups],
       ["diagnostics_nonpublic_groups", diagnostics.nonpublic_ip_groups],
@@ -517,6 +542,10 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       auth_log_truncated:
         diagnostics.auth_log_truncated === true ||
         diagnostics.temporal_auth_log_truncated === true,
+      session_observation_truncated:
+        diagnostics.session_observation_truncated === true ||
+        diagnostics.temporal_session_observation_truncated === true ||
+        diagnostics.browser_switch_rows_truncated === true,
       stale_recovered: scan.stale_recovered === true,
       has_pair_failures: Number(scan.pairs_failed || 0) > 0,
       has_pair_skips: Number(scan.pairs_skipped || 0) > 0,
@@ -608,7 +637,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         const authAccounts = accounts.filter(
           (account) =>
             account.sources.has("auth_session") ||
-            account.sources.has("active_session")
+            account.sources.has("active_session") ||
+            account.sources.has("session_observation")
         ).length;
         const visibleCount = accounts.length;
         const pairs = items.filter((item) => group.pair_ids.has(item.id));
@@ -698,6 +728,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     );
     const statusCounts = group.status_counts || {};
     const evidenceCounts = group.evidence_counts || {};
+    const allPairsVisible =
+      visiblePairs.length >= Number(group.pair_record_count || group.relation_count || 0);
+    const contextOnlyGroup =
+      allPairsVisible &&
+      visiblePairs.length > 0 &&
+      visiblePairs.every((item) => item.context_only === true);
     const evidenceSummary = [];
 
     if (Number(evidenceCounts.public_ip_pairs || 0) > 0) {
@@ -794,11 +830,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ),
       visible_pairs: visiblePairs,
       visible_pair_count: visiblePairs.length,
-      all_pairs_visible:
-        visiblePairs.length >= Number(group.pair_record_count || group.relation_count || 0),
-      strongest_confidence_label: i18n(
-        `admin.account_security.correlations.confidences.${group.strongest_confidence}`
-      ),
+      all_pairs_visible: allPairsVisible,
+      strongest_confidence_label: contextOnlyGroup
+        ? i18n("admin.account_security.correlations.context_only_short")
+        : i18n(
+            `admin.account_security.correlations.confidences.${group.strongest_confidence}`
+          ),
       account_count_label: i18n(
         "admin.account_security.correlations.group_account_count",
         { count: Number(group.account_count || 0) }
@@ -817,8 +854,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
           total: Number(group.pair_record_count || group.relation_count || 0),
         }
       ),
-      score_range_label:
-        Number(group.min_score || 0) === Number(group.max_score || 0)
+      score_range_label: contextOnlyGroup
+        ? i18n("admin.account_security.correlations.context_only_short")
+        : Number(group.min_score || 0) === Number(group.max_score || 0)
           ? `${Number(group.max_score || 0)}`
           : `${Number(group.min_score || 0)}–${Number(group.max_score || 0)}`,
       evidence_summary: evidenceSummary,
@@ -851,6 +889,212 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         (item) => !accountGroupedPairIds.has(item.id)
       ),
     };
+  }
+
+  decorateCalibration(data) {
+    if (!data) {
+      return data;
+    }
+
+    const draft = data.draft_profile || data.live_profile || {};
+    const fields = (data.descriptors || []).map((descriptor) => ({
+      ...descriptor,
+      value: draft[descriptor.key] ?? descriptor.default,
+      label: i18n(`admin.account_security.correlations.calibration.fields.${descriptor.key}`),
+    }));
+    const groupOrder = ["confidence", "ip", "timing", "transition", "browser", "client"];
+    const groups = groupOrder.map((group) => ({
+      key: group,
+      label: i18n(`admin.account_security.correlations.calibration.groups.${group}`),
+      fields: fields.filter((field) => field.group === group),
+    }));
+
+    return { ...data, groups };
+  }
+
+  calibrationProfile() {
+    return Object.fromEntries(
+      this.calibrationFields.map((field) => [field.key, field.value])
+    );
+  }
+
+  applyCalibrationData(data) {
+    const decorated = this.decorateCalibration(data);
+    const firstLoad = !this.calibrationData;
+    this.calibrationData = decorated;
+    this.calibrationFields = (decorated?.groups || []).flatMap((group) =>
+      group.fields.map((field) => ({ ...field }))
+    );
+    if (firstLoad && Number.isFinite(Number(decorated?.default_preview_rows))) {
+      this.calibrationPreviewLimit = Number(decorated.default_preview_rows);
+    }
+  }
+
+  decorateCalibrationPreview(preview) {
+    if (!preview) {
+      return preview;
+    }
+
+    const reviewStatusOrder = [
+      "confirmed_duplicate",
+      "expected_shared_network",
+      "dismissed",
+      "monitor",
+      "open",
+    ];
+    const reviewMatrix = preview.review_matrix || {};
+    const reviewRows = reviewStatusOrder
+      .filter((status) => reviewMatrix[status])
+      .map((status) => {
+        const counts = reviewMatrix[status] || {};
+        return {
+          status,
+          label: i18n(`admin.account_security.correlations.statuses.${status}`),
+          weak: Number(counts.weak || 0),
+          moderate: Number(counts.moderate || 0),
+          strong: Number(counts.strong || 0),
+          very_strong: Number(counts.very_strong || 0),
+          total:
+            Number(counts.weak || 0) +
+            Number(counts.moderate || 0) +
+            Number(counts.strong || 0) +
+            Number(counts.very_strong || 0),
+        };
+      })
+      .filter((row) => row.total > 0);
+
+    return {
+      ...preview,
+      review_rows: reviewRows,
+      largest_changes: (preview.largest_changes || []).map((row) => ({
+        ...row,
+        delta_display:
+          Number(row.delta || 0) > 0
+            ? `+${Number(row.delta || 0)}`
+            : `${Number(row.delta || 0)}`,
+        current_confidence_label: i18n(
+          `admin.account_security.correlations.confidences.${row.current_confidence || "weak"}`
+        ),
+        preview_confidence_label: i18n(
+          `admin.account_security.correlations.confidences.${row.preview_confidence || "weak"}`
+        ),
+        preview_breakdown: (row.preview_breakdown || []).map((entry) =>
+          this.decorateBreakdown(entry)
+        ),
+      })),
+    };
+  }
+
+  get calibrationGroups() {
+    const groups = this.calibrationData?.groups || [];
+    return groups.map((group) => ({
+      ...group,
+      fields: this.calibrationFields.filter((field) => field.group === group.key),
+    }));
+  }
+
+  @action
+  async toggleCalibration() {
+    this.calibrationOpen = !this.calibrationOpen;
+    if (!this.calibrationOpen || this.calibrationData || this.calibrationLoading) {
+      return;
+    }
+
+    this.calibrationLoading = true;
+    try {
+      const data = await ajax(
+        "/admin/plugins/account-security/scoring-calibration.json"
+      );
+      this.applyCalibrationData(data);
+    } catch (error) {
+      popupAjaxError(error);
+    } finally {
+      this.calibrationLoading = false;
+    }
+  }
+
+  @action
+  setCalibrationPreviewLimit(event) {
+    const value = Number.parseInt(event.target.value, 10);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    const maximum = Number(this.calibrationData?.max_preview_rows || 5000);
+    this.calibrationPreviewLimit = Math.max(1, Math.min(value, maximum));
+  }
+
+  @action
+  setCalibrationField(key, event) {
+    const raw = event.target.value;
+    const field = this.calibrationFields.find((item) => item.key === key);
+    if (!field) {
+      return;
+    }
+    const value = field.kind === "integer" ? Number.parseInt(raw, 10) : Number.parseFloat(raw);
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    this.calibrationFields = this.calibrationFields.map((item) =>
+      item.key === key ? { ...item, value } : item
+    );
+  }
+
+  @action
+  async previewCalibration() {
+    this.calibrationSaving = true;
+    try {
+      const preview = await ajax(
+        "/admin/plugins/account-security/scoring-calibration/preview.json",
+        {
+          type: "POST",
+          data: {
+            profile: this.calibrationProfile(),
+            limit: this.calibrationPreviewLimit,
+          },
+        }
+      );
+      this.calibrationPreview = this.decorateCalibrationPreview(preview);
+    } catch (error) {
+      popupAjaxError(error);
+    } finally {
+      this.calibrationSaving = false;
+    }
+  }
+
+  @action
+  async saveCalibrationDraft() {
+    this.calibrationSaving = true;
+    try {
+      const data = await ajax(
+        "/admin/plugins/account-security/scoring-calibration.json",
+        { type: "PUT", data: { profile: this.calibrationProfile() } }
+      );
+      this.applyCalibrationData(data);
+    } catch (error) {
+      popupAjaxError(error);
+    } finally {
+      this.calibrationSaving = false;
+    }
+  }
+
+  @action
+  async resetCalibrationDraft() {
+    if (!window.confirm(i18n("admin.account_security.correlations.calibration.reset_confirm"))) {
+      return;
+    }
+    this.calibrationSaving = true;
+    try {
+      const data = await ajax(
+        "/admin/plugins/account-security/scoring-calibration.json",
+        { type: "DELETE" }
+      );
+      this.applyCalibrationData(data);
+      this.calibrationPreview = undefined;
+    } catch (error) {
+      popupAjaxError(error);
+    } finally {
+      this.calibrationSaving = false;
+    }
   }
 
   async fetchCorrelations({ quiet = false } = {}) {

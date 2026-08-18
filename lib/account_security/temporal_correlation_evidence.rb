@@ -6,10 +6,14 @@ module ::AccountSecurity
   module TemporalCorrelationEvidence
     module_function
 
-    EVIDENCE_VERSION = 4
-    AUTH_PATTERN_EVIDENCE_VERSION = 3
+    EVIDENCE_VERSION = 5
+    AUTH_PATTERN_EVIDENCE_VERSION = 4
     MAX_AUTH_ROWS = 100_000
     MAX_PAIR_AUTH_ROWS_PER_USER = 5_000
+    MAX_SESSION_OBSERVATION_ROWS = 500_000
+    MAX_PAIR_SESSION_OBSERVATION_ROWS_PER_USER = 1_000
+    SESSION_OBSERVATION_EVIDENCE_HORIZON = 90.days
+    EVENT_DEDUP_WINDOW = 10.minutes
     MAX_DETAILS = 8
     MAX_AUTH_PROXIMITY_DETAILS = 6
     MAX_TRANSITION_DETAILS = 6
@@ -41,12 +45,12 @@ module ::AccountSecurity
       users_7d: 7.days.to_i,
       users_30d: 30.days.to_i,
     }.freeze
-    TIMED_SOURCES = %w[registration history auth_session].freeze
+    TIMED_SOURCES = %w[registration history auth_session session_observation].freeze
 
     class ScanIndex
       attr_reader :diagnostics
 
-      def initialize(population_complete: false, auth_history_complete: false)
+      def initialize(population_complete: false, auth_history_complete: false, session_history_complete: nil)
         @times_by_user = Hash.new do |users, user_id|
           users[user_id] = Hash.new { |ips, ip| ips[ip] = [] }
         end
@@ -64,30 +68,47 @@ module ::AccountSecurity
         @public_cache = {}
         @population_complete = population_complete == true
         @auth_history_complete = auth_history_complete == true
+        @session_history_complete =
+          if session_history_complete.nil?
+            !SiteSetting.account_security_session_observation_enabled
+          else
+            session_history_complete == true
+          end
         @diagnostics = {
           temporal_observation_rows: 0,
           temporal_registration_rows: 0,
           temporal_history_rows: 0,
           temporal_auth_session_rows: 0,
+          temporal_session_observation_rows: 0,
           temporal_auth_log_truncated: false,
+          temporal_session_observation_truncated: false,
+          session_observation_history_complete: @session_history_complete,
+          session_observation_evidence_horizon_days: (SESSION_OBSERVATION_EVIDENCE_HORIZON / 1.day).to_i,
           auth_pattern_rows: 0,
           auth_pattern_signature_rows: 0,
-          auth_pattern_history_complete: @auth_history_complete,
+          auth_pattern_history_complete: pattern_history_complete?,
           temporal_ip_population_complete: @population_complete,
-          public_transition_population_complete: @population_complete && @auth_history_complete,
+          public_transition_population_complete: @population_complete && pattern_history_complete?,
         }
       end
 
       def mark_population_complete!
         @population_complete = true
         diagnostics[:temporal_ip_population_complete] = true
-        diagnostics[:public_transition_population_complete] = @auth_history_complete
+        diagnostics[:public_transition_population_complete] = pattern_history_complete?
       end
 
       def mark_auth_history_complete!
         @auth_history_complete = true
-        diagnostics[:auth_pattern_history_complete] = true
-        diagnostics[:public_transition_population_complete] = @population_complete
+        diagnostics[:auth_pattern_history_complete] = pattern_history_complete?
+        diagnostics[:public_transition_population_complete] = @population_complete && pattern_history_complete?
+      end
+
+      def mark_session_history_complete!
+        @session_history_complete = true
+        diagnostics[:session_observation_history_complete] = true
+        diagnostics[:auth_pattern_history_complete] = pattern_history_complete?
+        diagnostics[:public_transition_population_complete] = @population_complete && pattern_history_complete?
       end
 
       def add(user_id, ip_value, source, observed_at)
@@ -120,6 +141,7 @@ module ::AccountSecurity
           ip: ip,
           at: time,
           signature: signature,
+          source: "auth_session",
         }
         @auth_events_by_user[user_id] << event
         @normalized_auth_events_cache.delete(user_id)
@@ -135,9 +157,40 @@ module ::AccountSecurity
         end
       end
 
+      def add_session_event(user_id, ip_value, signature_hash, observed_at)
+        user_id = user_id.to_i
+        ip = IpNormalizer.normalize(ip_value)
+        time = normalize_time(observed_at)
+        signature = signature_hash.to_s.match?(/\A[0-9a-f]{64}\z/) ? signature_hash.to_s : nil
+        return if user_id <= 0 || ip.blank? || time.blank?
+
+        add(user_id, ip, "session_observation", time)
+        event = { ip: ip, at: time, signature: signature, source: "session_observation" }
+        @auth_events_by_user[user_id] << event
+        @normalized_auth_events_cache.delete(user_id)
+        @auth_events_by_ip_cache.delete(user_id)
+        @auth_signature_counts_cache.delete(user_id)
+        @public_transition_times_cache.delete(user_id)
+        @public_transition_population_cache = nil
+        diagnostics[:auth_pattern_rows] += 1
+        if signature.present?
+          @auth_signature_users[signature] << user_id
+          diagnostics[:auth_pattern_signature_rows] += 1
+        end
+      end
+
       def mark_auth_log_truncated!
         @auth_history_complete = false
         diagnostics[:temporal_auth_log_truncated] = true
+        diagnostics[:auth_pattern_history_complete] = false
+        diagnostics[:temporal_ip_population_complete] = false
+        diagnostics[:public_transition_population_complete] = false
+      end
+
+      def mark_session_log_truncated!
+        @session_history_complete = false
+        diagnostics[:temporal_session_observation_truncated] = true
+        diagnostics[:session_observation_history_complete] = false
         diagnostics[:auth_pattern_history_complete] = false
         diagnostics[:temporal_ip_population_complete] = false
         diagnostics[:public_transition_population_complete] = false
@@ -195,6 +248,9 @@ module ::AccountSecurity
         {
           "temporal_evidence_version" => EVIDENCE_VERSION,
           "temporal_auth_history_complete" => @auth_history_complete,
+          "session_observation_history_complete" => @session_history_complete,
+          "combined_session_login_history_complete" => pattern_history_complete?,
+          "session_observation_evidence_horizon_days" => (SESSION_OBSERVATION_EVIDENCE_HORIZON / 1.day).to_i,
           "temporal_ip_population_complete" => @population_complete,
           "temporal_population_window_basis" => "closest_pair_midpoint",
           "timed_shared_ip_count" => details.length,
@@ -223,7 +279,7 @@ module ::AccountSecurity
         events_a = auth_events_for(user_a_id)
         events_b = auth_events_for(user_b_id)
         empty = TemporalCorrelationEvidence.empty_auth_pattern_evidence.merge(
-          "auth_pattern_history_complete" => @auth_history_complete,
+          "auth_pattern_history_complete" => pattern_history_complete?,
         )
         return empty if events_a.empty? || events_b.empty?
 
@@ -256,7 +312,7 @@ module ::AccountSecurity
 
         TemporalCorrelationEvidence.empty_auth_pattern_evidence.merge(
           "auth_pattern_evidence_version" => AUTH_PATTERN_EVIDENCE_VERSION,
-          "auth_pattern_history_complete" => @auth_history_complete,
+          "auth_pattern_history_complete" => pattern_history_complete?,
           "auth_proximity_closest_gap_seconds" => max_detail_value(proximity_details, "closest_gap_seconds", mode: :min),
           "auth_proximity_within_5m_count" => proximity_totals[:within_5m_count],
           "auth_proximity_within_30m_count" => proximity_totals[:within_30m_count],
@@ -382,7 +438,7 @@ module ::AccountSecurity
         transitions_a = public_transition_times_for(user_a_id)
         transitions_b = public_transition_times_for(user_b_id)
         shared_keys = transitions_a.keys & transitions_b.keys
-        population_complete = @population_complete && @auth_history_complete
+        population_complete = @population_complete && pattern_history_complete?
 
         details = shared_keys.filter_map do |key|
           closest = closest_pair(transitions_a[key], transitions_b[key])
@@ -536,7 +592,25 @@ module ::AccountSecurity
       end
 
       def normalized_auth_events(values)
-        Array(values).compact.uniq { |event| [event[:ip], event[:at], event[:signature]] }.sort_by { |event| event[:at] }
+        ordered = Array(values).compact.sort_by { |event| [event[:at], event[:source].to_s] }
+        collapsed = []
+        ordered.each do |event|
+          previous = collapsed.last
+          duplicate = previous && previous[:ip] == event[:ip] && previous[:signature] == event[:signature] &&
+            (event[:at] - previous[:at]).abs <= EVENT_DEDUP_WINDOW
+          if duplicate
+            # A login and the first page observation often occur seconds apart.
+            # Keep one event, preferring the authentication event when present.
+            collapsed[-1] = event if previous[:source] != "auth_session" && event[:source] == "auth_session"
+          else
+            collapsed << event
+          end
+        end
+        collapsed
+      end
+
+      def pattern_history_complete?
+        @auth_history_complete && @session_history_complete
       end
 
       def normalized_times(values)
@@ -607,6 +681,7 @@ module ::AccountSecurity
           .each { |user_id, ip, at| index.add(user_id, ip, "history", at) }
       end
 
+      auth_log_truncated = true
       if defined?(::UserAuthTokenLog)
         rows =
           ::UserAuthTokenLog
@@ -621,12 +696,28 @@ module ::AccountSecurity
           rows = rows.first(MAX_AUTH_ROWS)
         end
         rows.each { |user_id, ip, user_agent, at| index.add_auth_event(user_id, ip, user_agent, at) }
-        unless auth_log_truncated
-          index.mark_auth_history_complete!
-          index.mark_population_complete!
-        end
+        index.mark_auth_history_complete! unless auth_log_truncated
       end
 
+      session_history_truncated = false
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        rows =
+          SessionObservation
+            .where(user_id: user_ids)
+            .where("observed_at >= ?", SESSION_OBSERVATION_EVIDENCE_HORIZON.ago)
+            .order(observed_at: :desc, id: :desc)
+            .limit(MAX_SESSION_OBSERVATION_ROWS + 1)
+            .pluck(:user_id, :ip_address, :client_signature_hash, :observed_at)
+        session_history_truncated = rows.length > MAX_SESSION_OBSERVATION_ROWS
+        if session_history_truncated
+          index.mark_session_log_truncated!
+          rows = rows.first(MAX_SESSION_OBSERVATION_ROWS)
+        end
+        rows.each { |user_id, ip, signature, at| index.add_session_event(user_id, ip, signature, at) }
+        index.mark_session_history_complete! unless session_history_truncated
+      end
+
+      index.mark_population_complete! if !auth_log_truncated && !session_history_truncated
       index
     rescue ActiveRecord::StatementInvalid => e
       Rails.logger.warn("[account_security] temporal correlation scan index failed class=#{e.class}")
@@ -669,6 +760,26 @@ module ::AccountSecurity
           rows.each { |id, ip, user_agent, at| index.add_auth_event(id, ip, user_agent, at) }
         end
         index.mark_auth_history_complete! unless auth_history_truncated
+      end
+
+      session_history_truncated = false
+      if defined?(::AccountSecurity::SessionObservation) && SiteSetting.account_security_session_observation_enabled
+        ids.sort.each do |user_id|
+          rows =
+            SessionObservation
+              .where(user_id: user_id)
+              .where("observed_at >= ?", SESSION_OBSERVATION_EVIDENCE_HORIZON.ago)
+              .order(observed_at: :desc, id: :desc)
+              .limit(MAX_PAIR_SESSION_OBSERVATION_ROWS_PER_USER + 1)
+              .pluck(:user_id, :ip_address, :client_signature_hash, :observed_at)
+          if rows.length > MAX_PAIR_SESSION_OBSERVATION_ROWS_PER_USER
+            session_history_truncated = true
+            rows = rows.first(MAX_PAIR_SESSION_OBSERVATION_ROWS_PER_USER)
+          end
+          rows.each { |id, ip, signature, at| index.add_session_event(id, ip, signature, at) }
+        end
+        index.mark_session_history_complete! unless session_history_truncated
+        index.mark_session_log_truncated! if session_history_truncated
       end
 
       index.evidence_for_pair(user_a_id, user_b_id, shared_ips: shared_ips)
@@ -727,6 +838,9 @@ module ::AccountSecurity
       {
         "temporal_evidence_version" => EVIDENCE_VERSION,
         "temporal_auth_history_complete" => false,
+        "session_observation_history_complete" => !SiteSetting.account_security_session_observation_enabled,
+        "combined_session_login_history_complete" => false,
+        "session_observation_evidence_horizon_days" => (SESSION_OBSERVATION_EVIDENCE_HORIZON / 1.day).to_i,
         "temporal_ip_population_complete" => false,
         "temporal_population_window_basis" => "closest_pair_midpoint",
         "timed_shared_ip_count" => 0,

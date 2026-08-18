@@ -5,12 +5,13 @@ module ::AccountSecurity
     module_function
 
     SCORING_VERSION = 3
+    SCORING_REVISION = 2
 
     GROUP_CAPS = {
       exact_public_ip: 45,
       temporal_proximity: 12,
       public_ip_transition: 25,
-      browser_continuity: 27,
+      browser_continuity: 36,
       client_signature: 10,
       independent_ipv6_network: 6,
       registration_timing: 5,
@@ -24,19 +25,20 @@ module ::AccountSecurity
     INCOMPLETE_POPULATION_RARITY_CAP = 1.0 / Math.sqrt(2.0)
     UNKNOWN_POPULATION_USERS = 5
 
-    def score(evidence)
-      score_with_breakdown(evidence)[:score]
+    def score(evidence, profile: nil)
+      score_with_breakdown(evidence, profile: profile)[:score]
     end
 
-    def score_with_breakdown(evidence)
+    def score_with_breakdown(evidence, profile: nil)
       data = evidence.is_a?(Hash) ? evidence : {}
+      scoring_profile = ScoringCalibration.profile(profile || {})
       breakdown = []
 
-      exact_ip = exact_public_ip_score(data)
-      temporal = temporal_proximity_score(data)
-      transition = public_ip_transition_score(data)
-      browser = browser_continuity_score(data)
-      client = client_signature_score(data)
+      exact_ip = exact_public_ip_score(data, scoring_profile)
+      temporal = temporal_proximity_score(data, scoring_profile)
+      transition = public_ip_transition_score(data, scoring_profile)
+      browser = browser_continuity_score(data, scoring_profile)
+      client = client_signature_score(data, scoring_profile)
       ipv6 = independent_ipv6_network_score(data)
       registration = registration_timing_score(data)
 
@@ -56,7 +58,8 @@ module ::AccountSecurity
       total = exact_ip[:points] + temporal[:points] + transition[:points] + browser[:points] +
         client[:points] + ipv6[:points] + registration[:points]
 
-      if total >= 70 && !very_strong_eligible?(
+      very_strong_threshold = scoring_profile["very_strong_threshold"].to_i
+      if total >= very_strong_threshold && !very_strong_eligible?(
         exact_ip: exact_ip,
         temporal: temporal,
         transition: transition,
@@ -64,20 +67,36 @@ module ::AccountSecurity
         client: client,
         ipv6: ipv6,
       )
-        correction = 69 - total
+        guarded_score = [very_strong_threshold - 1, 0].max
+        correction = guarded_score - total
         add_breakdown!(breakdown, "v3_very_strong_guardrail", correction, 1)
-        total = 69
+        total = guarded_score
       end
 
       { score: total.clamp(0, 100), breakdown: breakdown }
     end
 
-    def confidence(score)
+    def confidence(score, profile: nil)
+      scoring_profile = ScoringCalibration.profile(profile || {})
       value = score.to_i
-      return "very_strong" if value >= 70
-      return "strong" if value >= 45
-      return "moderate" if value >= 25
+      return "very_strong" if value >= scoring_profile["very_strong_threshold"].to_i
+      return "strong" if value >= scoring_profile["strong_threshold"].to_i
+      return "moderate" if value >= scoring_profile["moderate_threshold"].to_i
       "weak"
+    end
+
+    def context_only?(evidence, profile: nil)
+      data = evidence.is_a?(Hash) ? evidence : {}
+      return false unless nonnegative_integer(data["shared_exact_ip_count"]).positive?
+      score(data, profile: profile).zero?
+    end
+
+    def context_only_reason(evidence)
+      data = evidence.is_a?(Hash) ? evidence : {}
+      details = Array(data["shared_ip_details"]).select { |detail| detail.is_a?(Hash) }
+      return "shared_internal_network" if details.any? && details.all? { |detail| !truthy?(detail["public"]) }
+      return "trusted_network" if details.any? && details.all? { |detail| truthy?(detail["trusted"]) }
+      "non_scoring_context"
     end
 
     def candidate?(score)
@@ -107,22 +126,22 @@ module ::AccountSecurity
         independent_ipv6_networks(data).any?
     end
 
-    def exact_public_ip_score(data)
-      candidates = exact_public_ip_candidates(data)
+    def exact_public_ip_score(data, profile)
+      candidates = exact_public_ip_candidates(data, profile)
       return score_result(0, 0) if candidates.empty?
 
       ordered = candidates.sort_by { |item| [-item[:specificity], item[:ip_address].to_s] }
       weighted = ordered.each_with_index.sum do |item, index|
-        24.0 * item[:specificity] * diminishing_weight(index, IP_WEIGHTS, EXTRA_IP_WEIGHT)
+        profile["exact_ip_base_points"].to_f * item[:specificity] * diminishing_weight(index, IP_WEIGHTS, EXTRA_IP_WEIGHT)
       end
       reliability_bonus = shared_ip_source_reliability_bonus(ordered)
-      points = [weighted.round + reliability_bonus, GROUP_CAPS[:exact_public_ip]].min
+      points = [weighted.round + reliability_bonus, profile["exact_ip_cap"].to_i].min
 
       score_result(points, ordered.length, specificity: ordered.first[:specificity])
     end
 
-    def temporal_proximity_score(data)
-      detail_by_ip = exact_public_ip_candidates(data).index_by { |item| item[:ip_address] }
+    def temporal_proximity_score(data, profile)
+      detail_by_ip = exact_public_ip_candidates(data, profile).index_by { |item| item[:ip_address] }
       auth_details = Array(data["auth_proximity_details"]).select { |raw| raw.is_a?(Hash) && truthy?(raw["public"]) }
       scored = auth_details.filter_map do |raw|
         ip = raw["ip_address"].to_s
@@ -132,7 +151,7 @@ module ::AccountSecurity
         gap = nonnegative_integer_or_nil(raw["closest_gap_seconds"])
         next if gap.nil?
 
-        base = login_gap_points(gap)
+        base = login_gap_points(gap, profile)
         next if base.zero?
 
         { points: base.to_f * ip_context[:specificity], specificity: ip_context[:specificity] }
@@ -151,16 +170,16 @@ module ::AccountSecurity
         else
           0
         end
-      points = [best[:points].round + (repeat_bonus * best[:specificity]).round, GROUP_CAPS[:temporal_proximity]].min
+      points = [best[:points].round + (repeat_bonus * best[:specificity]).round, profile["temporal_cap"].to_i].min
       score_result(points, scored.length)
     end
 
-    def public_ip_transition_score(data)
+    def public_ip_transition_score(data, profile)
       # The transition rarity already measures how distinctive the exact A -> B
       # sequence is. Do not multiply individual endpoint rarity into this group
       # a second time: endpoint commonness is already represented by the exact-IP
       # group. Only network context (Tor/hosting/mobile/trusted) carries across.
-      ip_context = transition_endpoint_contexts(data)
+      ip_context = transition_endpoint_contexts(data, profile)
       transition_details = Array(data["public_ip_transition_details"]).select { |raw| raw.is_a?(Hash) }
       scored = transition_details.filter_map do |raw|
         from_ip = raw["from_ip"].to_s
@@ -169,7 +188,7 @@ module ::AccountSecurity
 
         gap = nonnegative_integer_or_nil(raw["closest_transition_gap_seconds"])
         next if gap.nil?
-        decay = transition_time_decay(gap)
+        decay = transition_time_decay(gap, profile)
         next if decay.zero?
 
         from_context = ip_context[from_ip] || transition_endpoint_context(from_ip, data)
@@ -178,9 +197,9 @@ module ::AccountSecurity
 
         population_complete = truthy?(raw["transition_population_complete"]) || truthy?(data["public_ip_transition_population_complete"])
         transition_users = transition_population_for_gap(raw, gap)
-        transition_rarity = rarity_factor(transition_users, complete: population_complete)
+        transition_rarity = rarity_factor(transition_users, complete: population_complete, profile: profile)
         endpoint_factor = Math.sqrt(from_context[:context_factor] * to_context[:context_factor])
-        value = TRANSITION_BASE_POINTS * transition_rarity * endpoint_factor * decay
+        value = profile["transition_base_points"].to_f * transition_rarity * endpoint_factor * decay
         next unless value.positive?
 
         {
@@ -196,7 +215,7 @@ module ::AccountSecurity
       weighted = ordered.each_with_index.sum do |item, index|
         item[:points] * diminishing_weight(index, TRANSITION_WEIGHTS, EXTRA_TRANSITION_WEIGHT)
       end
-      points = [weighted.round, GROUP_CAPS[:public_ip_transition]].min
+      points = [weighted.round, profile["transition_cap"].to_i].min
       score_result(
         points,
         ordered.length,
@@ -205,21 +224,30 @@ module ::AccountSecurity
       )
     end
 
-    def browser_continuity_score(data)
+    def browser_continuity_score(data, profile)
       count = nonnegative_integer(data["browser_continuity_count"])
       return score_result(0, 0) if count.zero?
 
       users = positive_integer_or_nil(data["max_browser_continuity_users"])
-      rarity = rarity_factor(users, complete: users.present?)
-      base = 25
-      base += 1 if nonnegative_integer(data["repeated_browser_continuity_count"]).positive?
-      base += 1 if nonnegative_integer(data["browser_continuity_paired_observations"]) >= 4 ||
-        nonnegative_integer(data["browser_continuity_span_days"]) >= 7
-      points = [(base * rarity).round, GROUP_CAPS[:browser_continuity]].min
-      score_result(points, count, rarity: rarity)
+      rarity = rarity_factor(users, complete: users.present?, profile: profile)
+      base = profile["browser_base_points"].to_f
+      base += profile["browser_repeated_bonus"].to_f if nonnegative_integer(data["repeated_browser_continuity_count"]).positive?
+      if nonnegative_integer(data["browser_continuity_paired_observations"]) >= 4 ||
+          nonnegative_integer(data["browser_continuity_span_days"]) >= 7
+        base += profile["browser_sustained_bonus"].to_f
+      end
+
+      switch_gap = nonnegative_integer_or_nil(data["browser_account_switch_closest_gap_seconds"])
+      base += browser_switch_bonus(switch_gap, profile) if switch_gap
+      if nonnegative_integer(data["browser_account_switch_count"]) >= 3
+        base += profile["browser_repeated_switch_bonus"].to_f
+      end
+
+      points = [(base * rarity).round, profile["browser_cap"].to_i].min
+      score_result(points, count, rarity: rarity, switch_gap: switch_gap)
     end
 
-    def client_signature_score(data)
+    def client_signature_score(data, profile)
       count = nonnegative_integer(data["client_signature_group_count"])
       return score_result(0, 0) if count.zero?
 
@@ -231,12 +259,12 @@ module ::AccountSecurity
       ].max
       users = positive_integer_or_nil(data["max_client_signature_group_users"])
       complete = truthy?(data["client_signature_population_complete"])
-      rarity = rarity_factor(users, complete: complete)
+      rarity = rarity_factor(users, complete: complete, profile: profile)
 
-      base = count >= 2 ? 8 : 6
+      base = count >= 2 ? profile["client_multiple_points"].to_i : profile["client_single_points"].to_i
       base += 1 if repeated.positive?
       base += 1 if paired_observations >= 4
-      points = [(base * rarity).round, GROUP_CAPS[:client_signature]].min
+      points = [(base * rarity).round, profile["client_cap"].to_i].min
       score_result(points, count, rarity: rarity)
     end
 
@@ -271,11 +299,11 @@ module ::AccountSecurity
       score_result(points, points.positive? ? 1 : 0)
     end
 
-    def exact_public_ip_candidates(data)
+    def exact_public_ip_candidates(data, profile = nil)
       details = Array(data["shared_ip_details"]).select do |detail|
         detail.is_a?(Hash) && truthy?(detail["public"]) && !truthy?(detail["trusted"])
       end
-      return aggregate_public_ip_candidates(data) if details.empty?
+      return aggregate_public_ip_candidates(data, profile) if details.empty?
 
       temporal = Array(data["temporal_ip_details"]).select { |row| row.is_a?(Hash) }.index_by { |row| row["ip_address"].to_s }
       population_complete = truthy?(data["exact_ip_population_complete"])
@@ -285,11 +313,11 @@ module ::AccountSecurity
         temporal_detail = temporal[ip]
         users = effective_ip_population(detail, temporal_detail)
         rarity_complete = population_complete && (temporal_detail.blank? || !temporal_detail.key?("temporal_population_complete") || truthy?(temporal_detail["temporal_population_complete"]))
-        context = ip_context_factor(detail)
+        context = ip_context_factor(detail, profile)
 
         {
           ip_address: ip,
-          specificity: rarity_factor(users, complete: rarity_complete) * context,
+          specificity: rarity_factor(users, complete: rarity_complete, profile: profile) * context,
           users: users,
           sources_a: source_set(detail["sources_a"]),
           sources_b: source_set(detail["sources_b"]),
@@ -298,13 +326,13 @@ module ::AccountSecurity
       end.select { |item| item[:specificity].positive? }
     end
 
-    def aggregate_public_ip_candidates(data)
+    def aggregate_public_ip_candidates(data, profile = nil)
       count = nonnegative_integer(data["untrusted_public_ip_count"])
       count = nonnegative_integer(data["shared_public_ip_count"]) if count.zero?
       return [] if count.zero?
 
       users = positive_integer_or_nil(data["max_shared_exact_ip_users"])
-      specificity = rarity_factor(users, complete: truthy?(data["exact_ip_population_complete"]))
+      specificity = rarity_factor(users, complete: truthy?(data["exact_ip_population_complete"]), profile: profile)
       Array.new(count) do |index|
         {
           ip_address: "aggregate-#{index}",
@@ -317,14 +345,14 @@ module ::AccountSecurity
       end
     end
 
-    def transition_endpoint_contexts(data)
+    def transition_endpoint_contexts(data, profile = nil)
       Array(data["shared_ip_details"]).each_with_object({}) do |detail, memo|
         next unless detail.is_a?(Hash) && truthy?(detail["public"]) && !truthy?(detail["trusted"])
 
         ip = detail["ip_address"].to_s
         next if ip.blank?
 
-        context = ip_context_factor(detail)
+        context = ip_context_factor(detail, profile)
         memo[ip] = { ip_address: ip, context_factor: context }
       end
     end
@@ -378,7 +406,7 @@ module ::AccountSecurity
         b = detail[:sources_b]
         score = 0
         score += source_reliability(a, b, ["registration"], both: 4, one: 2)
-        score += source_reliability(a, b, %w[auth_session active_session], both: 2, one: 1)
+        score += source_reliability(a, b, %w[auth_session active_session session_observation], both: 2, one: 1)
         score += source_reliability(a, b, ["current"], both: 1, one: 0)
         score += source_reliability(a, b, ["history"], both: 1, one: 0)
         score
@@ -394,41 +422,52 @@ module ::AccountSecurity
       0
     end
 
-    def login_gap_points(seconds)
-      return 10 if seconds <= 5.minutes.to_i
-      return 9 if seconds <= 30.minutes.to_i
-      return 8 if seconds <= 1.hour.to_i
-      return 7 if seconds <= 6.hours.to_i
-      return 5 if seconds <= 1.day.to_i
-      return 3 if seconds <= 3.days.to_i
-      return 2 if seconds <= 7.days.to_i
+    def login_gap_points(seconds, profile)
+      return profile["login_5m_points"].to_i if seconds <= 5.minutes.to_i
+      return profile["login_30m_points"].to_i if seconds <= 30.minutes.to_i
+      return profile["login_1h_points"].to_i if seconds <= 1.hour.to_i
+      return profile["login_6h_points"].to_i if seconds <= 6.hours.to_i
+      return profile["login_24h_points"].to_i if seconds <= 1.day.to_i
+      return profile["login_72h_points"].to_i if seconds <= 3.days.to_i
+      return profile["login_7d_points"].to_i if seconds <= 7.days.to_i
       0
     end
 
-    def transition_time_decay(seconds)
+    def transition_time_decay(seconds, profile)
       return 1.00 if seconds <= 1.hour.to_i
       return 0.95 if seconds <= 6.hours.to_i
-      return 0.90 if seconds <= 1.day.to_i
-      return 0.75 if seconds <= 3.days.to_i
-      return 0.60 if seconds <= 7.days.to_i
-      return 0.35 if seconds <= 30.days.to_i
-      return 0.15 if seconds <= 90.days.to_i
-      return 0.05 if seconds <= 180.days.to_i
+      return profile["transition_decay_24h"].to_f if seconds <= 1.day.to_i
+      return ((profile["transition_decay_24h"].to_f + profile["transition_decay_7d"].to_f) / 2.0) if seconds <= 3.days.to_i
+      return profile["transition_decay_7d"].to_f if seconds <= 7.days.to_i
+      return profile["transition_decay_30d"].to_f if seconds <= 30.days.to_i
+      return profile["transition_decay_90d"].to_f if seconds <= 90.days.to_i
+      return profile["transition_decay_180d"].to_f if seconds <= 180.days.to_i
       0.0
     end
 
-    def rarity_factor(user_count, complete:)
+    def rarity_factor(user_count, complete:, profile: nil)
       users = [positive_integer_or_nil(user_count) || UNKNOWN_POPULATION_USERS, 2].max
-      raw = 1.0 / Math.sqrt([users - 1, 1].max.to_f)
+      exponent = ScoringCalibration.profile(profile || {})["rarity_exponent"].to_f
+      raw = 1.0 / ([users - 1, 1].max.to_f**exponent)
       complete ? raw : [raw, INCOMPLETE_POPULATION_RARITY_CAP].min
     end
 
-    def ip_context_factor(detail)
+    def ip_context_factor(detail, profile = nil)
+      scoring_profile = ScoringCalibration.profile(profile || {})
       return 0.0 if truthy?(detail["trusted"])
-      return 0.25 if truthy?(detail["tor"])
-      return 0.50 if truthy?(detail["hosting"])
-      return 0.60 if truthy?(detail["mobile"])
+      return scoring_profile["tor_context_factor"].to_f if truthy?(detail["tor"])
+      return scoring_profile["hosting_context_factor"].to_f if truthy?(detail["hosting"])
+      return scoring_profile["mobile_context_factor"].to_f if truthy?(detail["mobile"])
       1.0
+    end
+
+    def browser_switch_bonus(seconds, profile)
+      return 0 if seconds.nil?
+      return profile["browser_switch_1h_bonus"].to_f if seconds <= 1.hour.to_i
+      return profile["browser_switch_6h_bonus"].to_f if seconds <= 6.hours.to_i
+      return profile["browser_switch_24h_bonus"].to_f if seconds <= 1.day.to_i
+      return profile["browser_switch_7d_bonus"].to_f if seconds <= 7.days.to_i
+      0
     end
 
     def independent_ipv6_networks(data)

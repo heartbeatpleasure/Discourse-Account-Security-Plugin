@@ -52,6 +52,12 @@ plugins:
     depends_on:
       - account_security_account_correlation_enabled
 
+  account_security_session_observation_enabled:
+    default: true
+    client: false
+    depends_on:
+      - account_security_account_correlation_enabled
+
   account_security_correlation_auto_scan_frequency:
     default: "monthly"
     type: enum

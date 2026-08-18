@@ -29,6 +29,9 @@ module Jobs
         ::AccountSecurity::BrowserContinuity.where("last_seen_at < ?", correlation_cutoff),
       )
       delete_in_batches(
+        ::AccountSecurity::SessionObservation.where("observed_at < ?", correlation_cutoff),
+      )
+      delete_in_batches(
         ::AccountSecurity::AccountCorrelation
           .where.not(status: "confirmed_duplicate")
           .where("last_seen_at < ?", correlation_cutoff),

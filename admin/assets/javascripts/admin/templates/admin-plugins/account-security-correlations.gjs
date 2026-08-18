@@ -873,7 +873,27 @@ export default RouteTemplate(
       @media (max-width: 1100px) {
         .as-correlation__account-group-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
+      .as-correlation__calibration-groups { display: grid; gap: .8rem; margin-top: .9rem; }
+      .as-correlation__calibration-group { min-width: 0; padding: .9rem; border: 1px solid var(--as-border); border-radius: 14px; background: var(--as-surface-alt); }
+      .as-correlation__calibration-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin-top: .65rem; }
+      .as-correlation__calibration-grid input { width: 100%; min-height: 40px; box-sizing: border-box; margin: 0; }
+      .as-correlation__calibration-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .65rem; margin-top: .9rem; }
+      .as-correlation__calibration-limit { width: min(210px, 100%); }
+      .as-correlation__calibration-distributions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .8rem; }
+      .as-correlation__calibration-distribution { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; margin-top: .55rem; }
+      .as-correlation__calibration-review { display: grid; gap: .45rem; margin-top: .65rem; }
+      .as-correlation__calibration-review-row { display: grid; grid-template-columns: minmax(150px, 1.5fr) repeat(4, minmax(75px, .7fr)); gap: .45rem; align-items: center; padding: .55rem .65rem; border: 1px solid var(--as-border); border-radius: 10px; background: var(--secondary); }
+      .as-correlation__calibration-review-cell { min-width: 0; }
+      .as-correlation__calibration-review-count { font-weight: 650; }
+      .as-correlation__calibration-change-list { display: grid; gap: .55rem; margin-top: .65rem; }
+      .as-correlation__calibration-change { min-width: 0; padding: .7rem .8rem; border: 1px solid var(--as-border); border-radius: 12px; background: var(--secondary); }
+      .as-correlation__calibration-change-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .55rem; }
+      .as-correlation__calibration-breakdown { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
+      .as-correlation__calibration-breakdown span { padding: .2rem .42rem; border-radius: 999px; background: var(--primary-very-low); color: var(--as-muted); font-size: var(--font-down-1); }
       @media (max-width: 900px) {
+        .as-correlation__calibration-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-correlation__calibration-distributions { grid-template-columns: 1fr; }
+        .as-correlation__calibration-review-row { grid-template-columns: minmax(135px, 1.25fr) repeat(4, minmax(60px, .7fr)); }
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__filters { grid-template-columns: 1fr 1fr; }
@@ -907,6 +927,10 @@ export default RouteTemplate(
         .as-correlation__temporal-account-grid { grid-template-columns: 1fr; }
       }
       @media (max-width: 520px) {
+        .as-correlation__calibration-grid,
+        .as-correlation__calibration-distribution { grid-template-columns: 1fr; }
+        .as-correlation__calibration-review-row { grid-template-columns: 1fr 1fr; }
+        .as-correlation__calibration-review-row > strong { grid-column: 1 / -1; }
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: 1fr; }
         .as-correlation__view-tabs { display: grid; grid-template-columns: 1fr; }
@@ -997,6 +1021,7 @@ export default RouteTemplate(
               {{/if}}
               {{#if @controller.data.scan.stale_recovered}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_stale_recovered"}}</div>{{/if}}
               {{#if @controller.data.scan.auth_log_truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.diagnostics_auth_truncated"}}</div>{{/if}}
+              {{#if @controller.data.scan.session_observation_truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.diagnostics_session_observation_truncated"}}</div>{{/if}}
               {{#if @controller.data.scan.truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_truncated"}}</div>{{/if}}
               {{#if @controller.data.scan.has_pair_failures}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_pair_failures" count=@controller.data.scan.pairs_failed}}</div>{{/if}}
               {{#if @controller.data.scan.has_pair_skips}}<div class="as-correlation__notice" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_pair_skips" count=@controller.data.scan.pairs_skipped}}</div>{{/if}}
@@ -1026,6 +1051,156 @@ export default RouteTemplate(
             {{/if}}
           </div>
         </div>
+      </section>
+
+      <section class="as-correlation__panel">
+        <div class="as-correlation__panel-header">
+          <div class="as-correlation__copy">
+            <h2>{{i18n "admin.account_security.correlations.calibration.title"}}</h2>
+            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.calibration.description"}}</p>
+          </div>
+          <button class="btn" type="button" {{on "click" @controller.toggleCalibration}}>
+            {{if @controller.calibrationOpen (i18n "admin.account_security.correlations.calibration.close") (i18n "admin.account_security.correlations.calibration.open")}}
+          </button>
+        </div>
+        <div class="as-correlation__notice" style="margin-top: .8rem;">
+          {{i18n "admin.account_security.correlations.calibration.preview_only_notice"}}
+        </div>
+
+        {{#if @controller.calibrationOpen}}
+          {{#if @controller.calibrationLoading}}
+            <div class="as-correlation__empty" style="margin-top: .8rem;">{{i18n "admin.account_security.correlations.calibration.loading"}}</div>
+          {{else}}
+            {{#if @controller.calibrationData}}
+              <p class="as-correlation__muted" style="margin-top: .8rem;">
+                {{i18n "admin.account_security.correlations.calibration.live_version" version=@controller.calibrationData.scoring_version revision=@controller.calibrationData.scoring_revision}}
+              </p>
+              <div class="as-correlation__calibration-groups">
+                {{#each @controller.calibrationGroups as |group|}}
+                  <div class="as-correlation__calibration-group">
+                    <h3>{{group.label}}</h3>
+                    <div class="as-correlation__calibration-grid">
+                      {{#each group.fields as |field|}}
+                        <div class="as-correlation__field">
+                          <label>{{field.label}}</label>
+                          <input
+                            type="number"
+                            min={{field.min}}
+                            max={{field.max}}
+                            step={{field.step}}
+                            value={{field.value}}
+                            disabled={{@controller.calibrationSaving}}
+                            {{on "input" (fn @controller.setCalibrationField field.key)}}
+                          />
+                        </div>
+                      {{/each}}
+                    </div>
+                  </div>
+                {{/each}}
+              </div>
+
+              <div class="as-correlation__calibration-toolbar">
+                <div class="as-correlation__field as-correlation__calibration-limit">
+                  <label>{{i18n "admin.account_security.correlations.calibration.preview_rows"}}</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={{@controller.calibrationData.max_preview_rows}}
+                    step="100"
+                    value={{@controller.calibrationPreviewLimit}}
+                    disabled={{@controller.calibrationSaving}}
+                    {{on "input" @controller.setCalibrationPreviewLimit}}
+                  />
+                </div>
+                <button class="btn btn-primary" type="button" disabled={{@controller.calibrationSaving}} {{on "click" @controller.previewCalibration}}>{{i18n "admin.account_security.correlations.calibration.preview"}}</button>
+                <button class="btn" type="button" disabled={{@controller.calibrationSaving}} {{on "click" @controller.saveCalibrationDraft}}>{{i18n "admin.account_security.correlations.calibration.save_draft"}}</button>
+                <button class="btn" type="button" disabled={{@controller.calibrationSaving}} {{on "click" @controller.resetCalibrationDraft}}>{{i18n "admin.account_security.correlations.calibration.reset"}}</button>
+              </div>
+              <p class="as-correlation__muted" style="margin-top: .55rem;">{{i18n "admin.account_security.correlations.calibration.draft_note"}}</p>
+
+              {{#if @controller.calibrationPreview}}
+                <div class="as-correlation__subpanel" style="margin-top: .9rem;">
+                  <h3>{{i18n "admin.account_security.correlations.calibration.preview_results"}}</h3>
+                  <div class="as-correlation__compact-grid" style="margin-top: .65rem;">
+                    <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.calibration.processed"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.processed}} / {{@controller.calibrationPreview.total}}</div></div>
+                    <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.calibration.changed"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.changed_count}}</div></div>
+                    <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.calibration.confidence_changed"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.confidence_changed_count}}</div></div>
+                    <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.calibration.context_only"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.context_only_count}}</div></div>
+                  </div>
+                  {{#if @controller.calibrationPreview.truncated}}
+                    <div class="as-correlation__notice" style="margin-top: .65rem;">{{i18n "admin.account_security.correlations.calibration.preview_truncated" limit=@controller.calibrationPreview.limit total=@controller.calibrationPreview.total}}</div>
+                  {{/if}}
+
+                  <div class="as-correlation__calibration-distributions">
+                    <div class="as-correlation__subpanel" style="background: var(--secondary);">
+                      <h4>{{i18n "admin.account_security.correlations.calibration.current_distribution"}}</h4>
+                      <div class="as-correlation__calibration-distribution">
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.weak"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.current_distribution.weak}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.moderate"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.current_distribution.moderate}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.strong"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.current_distribution.strong}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.very_strong"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.current_distribution.very_strong}}</div></div>
+                      </div>
+                    </div>
+                    <div class="as-correlation__subpanel" style="background: var(--secondary);">
+                      <h4>{{i18n "admin.account_security.correlations.calibration.preview_distribution"}}</h4>
+                      <div class="as-correlation__calibration-distribution">
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.weak"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.preview_distribution.weak}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.moderate"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.preview_distribution.moderate}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.strong"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.preview_distribution.strong}}</div></div>
+                        <div class="as-correlation__diagnostic"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.very_strong"}}</div><div class="as-correlation__value">{{@controller.calibrationPreview.preview_distribution.very_strong}}</div></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top: .85rem;">
+                    <h4>{{i18n "admin.account_security.correlations.calibration.review_matrix_title"}}</h4>
+                    <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.calibration.review_matrix_note"}}</p>
+                    {{#if @controller.calibrationPreview.review_rows.length}}
+                      <div class="as-correlation__calibration-review">
+                        {{#each @controller.calibrationPreview.review_rows as |row|}}
+                          <div class="as-correlation__calibration-review-row">
+                            <strong>{{row.label}} ({{row.total}})</strong>
+                            <div class="as-correlation__calibration-review-cell"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.weak"}}</div><div class="as-correlation__calibration-review-count">{{row.weak}}</div></div>
+                            <div class="as-correlation__calibration-review-cell"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.moderate"}}</div><div class="as-correlation__calibration-review-count">{{row.moderate}}</div></div>
+                            <div class="as-correlation__calibration-review-cell"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.strong"}}</div><div class="as-correlation__calibration-review-count">{{row.strong}}</div></div>
+                            <div class="as-correlation__calibration-review-cell"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.confidences.very_strong"}}</div><div class="as-correlation__calibration-review-count">{{row.very_strong}}</div></div>
+                          </div>
+                        {{/each}}
+                      </div>
+                    {{else}}
+                      <div class="as-correlation__empty" style="margin-top: .55rem;">{{i18n "admin.account_security.correlations.calibration.review_matrix_empty"}}</div>
+                    {{/if}}
+                  </div>
+
+                  <div style="margin-top: .85rem;">
+                    <h4>{{i18n "admin.account_security.correlations.calibration.largest_changes"}}</h4>
+                    {{#if @controller.calibrationPreview.largest_changes.length}}
+                      <div class="as-correlation__calibration-change-list">
+                        {{#each @controller.calibrationPreview.largest_changes as |row|}}
+                          <div class="as-correlation__calibration-change">
+                            <div class="as-correlation__calibration-change-head">
+                              <strong>{{row.user_a.username}} ↔ {{row.user_b.username}}</strong>
+                              <span>{{row.current_score}} / {{row.current_confidence_label}} → {{row.preview_score}} / {{row.preview_confidence_label}} ({{row.delta_display}})</span>
+                            </div>
+                            {{#if row.preview_breakdown.length}}
+                              <div class="as-correlation__calibration-breakdown">
+                                {{#each row.preview_breakdown as |entry|}}
+                                  <span>{{entry.label}} {{entry.points_display}}</span>
+                                {{/each}}
+                              </div>
+                            {{/if}}
+                          </div>
+                        {{/each}}
+                      </div>
+                    {{else}}
+                      <div class="as-correlation__empty" style="margin-top: .6rem;">{{i18n "admin.account_security.correlations.calibration.no_changes"}}</div>
+                    {{/if}}
+                  </div>
+                </div>
+              {{/if}}
+            {{/if}}
+          {{/if}}
+        {{/if}}
       </section>
 
       <section class="as-correlation__panel">

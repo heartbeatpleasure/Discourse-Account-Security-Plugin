@@ -274,8 +274,9 @@ module ::AccountSecurity
       exact_details = exact_index.shared_details(user_a_id, user_b_id)
       supplemental = scan_context.evidence_for_pair(user_a_id, user_b_id)
       core_auth_complete = exact_index.diagnostics[:auth_log_truncated] != true
+      session_observation_complete = exact_index.diagnostics[:session_observation_truncated] != true
       supplemental["core_auth_history_complete"] = core_auth_complete
-      supplemental["exact_ip_population_complete"] = core_auth_complete
+      supplemental["exact_ip_population_complete"] = core_auth_complete && session_observation_complete
       supplemental["temporal_evidence"] = temporal_index.evidence_for_pair(
         user_a_id,
         user_b_id,
