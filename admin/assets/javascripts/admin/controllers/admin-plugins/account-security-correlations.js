@@ -402,9 +402,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       has_auth_pattern_evidence:
         Number(evidence.auth_proximity_within_30m_count || 0) > 0 ||
         Number(evidence.shared_auth_client_signature_count || 0) > 0 ||
-        Number(evidence.aligned_public_ip_transition_7d_count || 0) > 0 ||
+        Number(evidence.public_ip_transition_pattern_count || 0) > 0 ||
         Number(evidence.repeated_browser_continuity_count || 0) > 0 ||
         Number(evidence.repeated_shared_session_signature_count || 0) > 0,
+      auth_pattern_history_incomplete:
+        evidence.auth_pattern_history_complete !== true ||
+        evidence.core_auth_history_complete !== true ||
+        evidence.exact_ip_population_complete !== true,
       network_context_summary: {
         ...networkSummary,
         organizations_display: (networkSummary.organizations || []).join(", "),
@@ -438,7 +442,10 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ["diagnostics_network_pairs", diagnostics.network_pairs_added],
       ["diagnostics_signature_pairs", diagnostics.signature_pairs_added],
       ["diagnostics_large_groups", diagnostics.large_ip_groups_skipped],
-      ["diagnostics_existing_pairs", diagnostics.existing_pairs_added],
+      ["diagnostics_existing_pairs", diagnostics.existing_pairs_total],
+      ["diagnostics_discovery_pairs", diagnostics.discovery_pairs_selected],
+      ["diagnostics_existing_processed", diagnostics.existing_pairs_processed],
+      ["diagnostics_discovery_processed", diagnostics.discovery_pairs_processed],
       ["diagnostics_temporal_observations", diagnostics.temporal_observation_rows],
       ["diagnostics_auth_pattern_rows", diagnostics.auth_pattern_rows],
       ["diagnostics_total_pairs", diagnostics.total_candidate_pairs],
@@ -497,6 +504,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       auth_log_truncated:
         diagnostics.auth_log_truncated === true ||
         diagnostics.temporal_auth_log_truncated === true,
+      stale_recovered: scan.stale_recovered === true,
+      has_pair_failures: Number(scan.pairs_failed || 0) > 0,
+      has_pair_skips: Number(scan.pairs_skipped || 0) > 0,
     };
   }
 

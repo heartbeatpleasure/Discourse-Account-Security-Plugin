@@ -979,7 +979,12 @@ export default RouteTemplate(
               <div class="as-correlation__compact-grid" style="margin-top: .75rem;">
                 <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_state"}}</div><div class="as-correlation__value">{{@controller.data.scan.state}}</div></div>
                 <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_pairs"}}</div><div class="as-correlation__value">{{if @controller.data.scan.pairs_processed @controller.data.scan.pairs_processed 0}}</div></div>
-                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_candidates"}}</div><div class="as-correlation__value">{{if @controller.data.scan.candidates_found @controller.data.scan.candidates_found 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_new_candidates"}}</div><div class="as-correlation__value">{{if @controller.data.scan.new_candidates @controller.data.scan.new_candidates 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_existing_updated"}}</div><div class="as-correlation__value">{{if @controller.data.scan.existing_candidates_updated @controller.data.scan.existing_candidates_updated 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_existing_below_threshold"}}</div><div class="as-correlation__value">{{if @controller.data.scan.existing_candidates_below_threshold @controller.data.scan.existing_candidates_below_threshold 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_new_below_threshold"}}</div><div class="as-correlation__value">{{if @controller.data.scan.new_candidates_below_threshold @controller.data.scan.new_candidates_below_threshold 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_failed_pairs"}}</div><div class="as-correlation__value">{{if @controller.data.scan.pairs_failed @controller.data.scan.pairs_failed 0}}</div></div>
+                <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_skipped_pairs"}}</div><div class="as-correlation__value">{{if @controller.data.scan.pairs_skipped @controller.data.scan.pairs_skipped 0}}</div></div>
                 <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.scan_source"}}</div><div class="as-correlation__value">{{@controller.data.scan.source_label}}</div></div>
               </div>
               <div class="as-correlation__diagnostics">
@@ -990,8 +995,11 @@ export default RouteTemplate(
               {{#if @controller.data.scan.started_at}}
                 <p class="as-correlation__muted" style="margin-top: .65rem;">{{i18n "admin.account_security.correlations.scan_started"}}: {{@controller.data.scan.started_at_display}}{{#if @controller.data.scan.completed_at}} · {{i18n "admin.account_security.correlations.scan_completed"}}: {{@controller.data.scan.completed_at_display}}{{/if}}</p>
               {{/if}}
+              {{#if @controller.data.scan.stale_recovered}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_stale_recovered"}}</div>{{/if}}
               {{#if @controller.data.scan.auth_log_truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.diagnostics_auth_truncated"}}</div>{{/if}}
               {{#if @controller.data.scan.truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_truncated"}}</div>{{/if}}
+              {{#if @controller.data.scan.has_pair_failures}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_pair_failures" count=@controller.data.scan.pairs_failed}}</div>{{/if}}
+              {{#if @controller.data.scan.has_pair_skips}}<div class="as-correlation__notice" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_pair_skips" count=@controller.data.scan.pairs_skipped}}</div>{{/if}}
               {{#if @controller.data.scan.large_shared_groups.length}}
                 <div class="as-correlation__subpanel" style="margin-top: .8rem; background: var(--secondary);">
                   <h4>{{i18n "admin.account_security.correlations.high_sharing_title"}}</h4>

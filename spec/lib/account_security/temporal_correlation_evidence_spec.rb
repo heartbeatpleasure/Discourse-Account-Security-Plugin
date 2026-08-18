@@ -80,7 +80,7 @@ RSpec.describe "authentication pattern evidence" do
       shared_ips: ["8.8.8.8", "1.1.1.1"],
     )
 
-    expect(evidence["auth_pattern_evidence_version"]).to eq(1)
+    expect(evidence["auth_pattern_evidence_version"]).to eq(AccountSecurity::TemporalCorrelationEvidence::AUTH_PATTERN_EVIDENCE_VERSION)
     expect(evidence["auth_proximity_within_5m_count"]).to eq(1)
     expect(evidence["auth_proximity_within_30m_count"]).to eq(2)
     expect(evidence["auth_proximity_same_client_within_30m_count"]).to eq(2)
@@ -120,4 +120,75 @@ RSpec.describe "authentication pattern evidence" do
     expect(evidence["auth_client_signature_population_complete"]).to eq(true)
     expect(evidence.to_json).not_to include(user_agent)
   end
+
+  it "marks pair authentication evidence incomplete when the bounded per-user history is truncated" do
+    stub_const("AccountSecurity::TemporalCorrelationEvidence::MAX_PAIR_AUTH_ROWS_PER_USER", 2)
+    base = 1.day.ago.change(usec: 0)
+
+    3.times do |offset|
+      UserAuthTokenLog.create!(
+        user_id: pattern_user_a.id,
+        action: "generate",
+        client_ip: "8.8.8.8",
+        user_agent: "Browser A",
+        created_at: base + offset.minutes,
+      )
+    end
+    UserAuthTokenLog.create!(
+      user_id: pattern_user_b.id,
+      action: "generate",
+      client_ip: "8.8.8.8",
+      user_agent: "Browser B",
+      created_at: base + 1.minute,
+    )
+
+    evidence = AccountSecurity::TemporalCorrelationEvidence.for_pair(
+      pattern_user_a.id,
+      pattern_user_b.id,
+      shared_ips: ["8.8.8.8"],
+    )
+
+    expect(evidence["temporal_auth_history_complete"]).to eq(false)
+    expect(evidence["auth_pattern_history_complete"]).to eq(false)
+    expect(evidence["auth_pattern_score_effect"]).to eq("none")
+  end
+
+  it "separates a matching transition pattern from a transition aligned in time" do
+    base = 20.days.ago.change(usec: 0)
+    user_agent = "Mozilla/5.0"
+
+    [
+      [pattern_user_a, base],
+      [pattern_user_b, base + 8.days],
+    ].each do |user, start_at|
+      UserAuthTokenLog.create!(
+        user_id: user.id,
+        action: "generate",
+        client_ip: "8.8.8.8",
+        user_agent: user_agent,
+        created_at: start_at,
+      )
+      UserAuthTokenLog.create!(
+        user_id: user.id,
+        action: "generate",
+        client_ip: "1.1.1.1",
+        user_agent: user_agent,
+        created_at: start_at + 1.hour,
+      )
+    end
+
+    evidence = AccountSecurity::TemporalCorrelationEvidence.for_pair(
+      pattern_user_a.id,
+      pattern_user_b.id,
+      shared_ips: [],
+    )
+
+    expect(evidence["public_ip_transition_pattern_count"]).to eq(1)
+    expect(evidence["public_ip_transition_match_count"]).to eq(1)
+    expect(evidence["aligned_public_ip_transition_24h_count"]).to eq(0)
+    expect(evidence["aligned_public_ip_transition_7d_count"]).to eq(0)
+    expect(evidence["public_ip_transition_unaligned_count"]).to eq(1)
+    expect(evidence["public_ip_transition_details"]).to be_empty
+  end
+
 end

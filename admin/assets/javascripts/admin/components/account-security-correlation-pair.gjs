@@ -304,11 +304,17 @@ export default class AccountSecurityCorrelationPair extends Component {
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_very_close_logins"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_within_5m_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_close_logins"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_within_30m_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_same_client"}}</div><div class="as-correlation__value">{{@item.evidence.auth_proximity_same_client_within_30m_count}}</div></div>
-            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_public_transitions"}}</div><div class="as-correlation__value">{{@item.evidence.aligned_public_ip_transition_7d_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_transition_patterns"}}</div><div class="as-correlation__value">{{@item.evidence.public_ip_transition_pattern_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_transitions_24h"}}</div><div class="as-correlation__value">{{@item.evidence.aligned_public_ip_transition_24h_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_transitions_7d"}}</div><div class="as-correlation__value">{{@item.evidence.aligned_public_ip_transition_7d_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_shared_client_signatures"}}</div><div class="as-correlation__value">{{@item.evidence.shared_auth_client_signature_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_browser"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_browser_continuity_count}}</div></div>
             <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.auth_patterns_repeated_session"}}</div><div class="as-correlation__value">{{@item.evidence.repeated_shared_session_signature_count}}</div></div>
           </div>
+
+          {{#if @item.auth_pattern_history_incomplete}}
+            <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.auth_patterns_history_incomplete"}}</div>
+          {{/if}}
 
           {{#if @item.evidence.auth_client_signature_population_complete}}
             {{#if @item.evidence.max_shared_auth_client_signature_users}}

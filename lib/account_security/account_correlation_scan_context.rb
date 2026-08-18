@@ -197,7 +197,8 @@ module ::AccountSecurity
 
     def add_group_pairs!(pairs, groups, max_group_users:, max_pairs:)
       added = 0
-      groups.each_value do |ids|
+      groups.keys.sort_by { |key| Array(key).map(&:to_s).join("\0") }.each do |key|
+        ids = groups[key]
         next if ids.length < 2 || ids.length > max_group_users
 
         ids.to_a.sort.combination(2) do |pair|

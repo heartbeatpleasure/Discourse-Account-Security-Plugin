@@ -56,7 +56,8 @@ module ::AccountSecurity
       def pair_set(max_group_users:, max_pairs:)
         pairs = Set.new
 
-        @by_ip.each do |ip, users|
+        @by_ip.keys.sort.each do |ip|
+          users = @by_ip[ip]
           count = users.length
           next if count < 2
 
@@ -148,7 +149,8 @@ module ::AccountSecurity
           ::UserAuthTokenLog
             .where(user_id: user_ids, action: "generate")
             .where.not(client_ip: nil)
-            .distinct
+            .group(:user_id, :client_ip)
+            .order(Arel.sql("MAX(created_at) DESC"), :user_id, :client_ip)
             .limit(MAX_AUTH_INDEX_ROWS + 1)
             .pluck(:user_id, :client_ip)
         if rows.length > MAX_AUTH_INDEX_ROWS
@@ -345,7 +347,7 @@ module ::AccountSecurity
     def append_ids!(target, scope, column, max_group_users)
       limit = max_group_users ? max_group_users + 1 : nil
       relation = scope.distinct
-      relation = relation.limit(limit) if limit
+      relation = relation.order(column => :asc).limit(limit) if limit
       relation.pluck(column).each do |id|
         target << id.to_i if id.to_i.positive?
         return if max_group_users && target.length > max_group_users

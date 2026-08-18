@@ -6,8 +6,8 @@ module ::AccountSecurity
   module TemporalCorrelationEvidence
     module_function
 
-    EVIDENCE_VERSION = 2
-    AUTH_PATTERN_EVIDENCE_VERSION = 1
+    EVIDENCE_VERSION = 3
+    AUTH_PATTERN_EVIDENCE_VERSION = 2
     MAX_AUTH_ROWS = 100_000
     MAX_PAIR_AUTH_ROWS_PER_USER = 5_000
     MAX_DETAILS = 8
@@ -22,7 +22,7 @@ module ::AccountSecurity
     class ScanIndex
       attr_reader :diagnostics
 
-      def initialize(population_complete: false)
+      def initialize(population_complete: false, auth_history_complete: false)
         @times_by_user = Hash.new do |users, user_id|
           users[user_id] = Hash.new { |ips, ip| ips[ip] = [] }
         end
@@ -34,6 +34,7 @@ module ::AccountSecurity
         @public_transition_times_cache = {}
         @public_cache = {}
         @population_complete = population_complete == true
+        @auth_history_complete = auth_history_complete == true
         @diagnostics = {
           temporal_observation_rows: 0,
           temporal_registration_rows: 0,
@@ -42,11 +43,17 @@ module ::AccountSecurity
           temporal_auth_log_truncated: false,
           auth_pattern_rows: 0,
           auth_pattern_signature_rows: 0,
+          auth_pattern_history_complete: @auth_history_complete,
         }
       end
 
       def mark_population_complete!
         @population_complete = true
+      end
+
+      def mark_auth_history_complete!
+        @auth_history_complete = true
+        diagnostics[:auth_pattern_history_complete] = true
       end
 
       def add(user_id, ip_value, source, observed_at)
@@ -92,7 +99,9 @@ module ::AccountSecurity
       end
 
       def mark_auth_log_truncated!
+        @auth_history_complete = false
         diagnostics[:temporal_auth_log_truncated] = true
+        diagnostics[:auth_pattern_history_complete] = false
       end
 
       def evidence_for_pair(user_a_id, user_b_id, shared_ips: nil)
@@ -132,6 +141,7 @@ module ::AccountSecurity
 
         {
           "temporal_evidence_version" => EVIDENCE_VERSION,
+          "temporal_auth_history_complete" => @auth_history_complete,
           "timed_shared_ip_count" => details.length,
           "temporal_within_15m_count" => within_15m,
           "temporal_within_1h_count" => within_1h,
@@ -151,7 +161,10 @@ module ::AccountSecurity
       def authentication_pattern_evidence(user_a_id, user_b_id, shared_ips:)
         events_a = auth_events_for(user_a_id)
         events_b = auth_events_for(user_b_id)
-        return TemporalCorrelationEvidence.empty_auth_pattern_evidence if events_a.empty? || events_b.empty?
+        empty = TemporalCorrelationEvidence.empty_auth_pattern_evidence.merge(
+          "auth_pattern_history_complete" => @auth_history_complete,
+        )
+        return empty if events_a.empty? || events_b.empty?
 
         shared_ip_set = Array(shared_ips).map { |value| IpNormalizer.normalize(value) }.compact.to_set
         if shared_ip_set.empty?
@@ -175,6 +188,7 @@ module ::AccountSecurity
 
         TemporalCorrelationEvidence.empty_auth_pattern_evidence.merge(
           "auth_pattern_evidence_version" => AUTH_PATTERN_EVIDENCE_VERSION,
+          "auth_pattern_history_complete" => @auth_history_complete,
           "auth_proximity_within_5m_count" => close_5m,
           "auth_proximity_within_30m_count" => close_30m,
           "auth_proximity_same_client_within_30m_count" => same_client,
@@ -186,9 +200,15 @@ module ::AccountSecurity
           "shared_auth_client_signature_paired_observations" => signature_summary[:paired_observations],
           "max_shared_auth_client_signature_users" => signature_summary[:max_users],
           "auth_client_signature_population_complete" => @population_complete,
-          "public_ip_transition_match_count" => transition_summary[:match_count],
+          # Keep the legacy match_count key for stored-evidence compatibility, but
+          # distinguish a repeated transition pattern from a temporally aligned
+          # transition. Scoring v3 can therefore use only the calibrated aligned
+          # signal instead of treating any same from-IP -> to-IP pattern as close.
+          "public_ip_transition_match_count" => transition_summary[:pattern_count],
+          "public_ip_transition_pattern_count" => transition_summary[:pattern_count],
           "aligned_public_ip_transition_24h_count" => transition_summary[:within_24h_count],
           "aligned_public_ip_transition_7d_count" => transition_summary[:within_7d_count],
+          "public_ip_transition_unaligned_count" => transition_summary[:unaligned_count],
           "public_ip_transition_details" => transition_summary[:details].first(MAX_TRANSITION_DETAILS),
           "public_ip_transition_details_truncated" => transition_summary[:details].length > MAX_TRANSITION_DETAILS,
           "auth_pattern_score_effect" => "none",
@@ -282,9 +302,10 @@ module ::AccountSecurity
         details.sort_by! { |detail| [detail["closest_transition_gap_seconds"].to_i, detail["from_ip"], detail["to_ip"]] }
 
         {
-          match_count: shared_keys.length,
+          pattern_count: shared_keys.length,
           within_24h_count: details.count { |detail| detail["closest_transition_gap_seconds"].to_i <= TRANSITION_TIGHT_ALIGNMENT_WINDOW },
           within_7d_count: details.length,
+          unaligned_count: [shared_keys.length - details.length, 0].max,
           details: details,
         }
       end
@@ -401,7 +422,7 @@ module ::AccountSecurity
           ::UserAuthTokenLog
             .where(user_id: user_ids, action: "generate")
             .where.not(client_ip: nil)
-            .order(created_at: :desc)
+            .order(created_at: :desc, id: :desc)
             .limit(MAX_AUTH_ROWS + 1)
             .pluck(:user_id, :client_ip, :user_agent, :created_at)
         auth_log_truncated = rows.length > MAX_AUTH_ROWS
@@ -410,7 +431,10 @@ module ::AccountSecurity
           rows = rows.first(MAX_AUTH_ROWS)
         end
         rows.each { |user_id, ip, user_agent, at| index.add_auth_event(user_id, ip, user_agent, at) }
-        index.mark_population_complete! unless auth_log_truncated
+        unless auth_log_truncated
+          index.mark_auth_history_complete!
+          index.mark_population_complete!
+        end
       end
 
       index
@@ -438,16 +462,23 @@ module ::AccountSecurity
           .each { |user_id, ip, at| index.add(user_id, ip, "history", at) }
       end
 
+      auth_history_truncated = false
       if defined?(::UserAuthTokenLog)
-        ids.each do |user_id|
-          ::UserAuthTokenLog
-            .where(user_id: user_id, action: "generate")
-            .where.not(client_ip: nil)
-            .order(created_at: :desc)
-            .limit(MAX_PAIR_AUTH_ROWS_PER_USER)
-            .pluck(:user_id, :client_ip, :user_agent, :created_at)
-            .each { |id, ip, user_agent, at| index.add_auth_event(id, ip, user_agent, at) }
+        ids.sort.each do |user_id|
+          rows =
+            ::UserAuthTokenLog
+              .where(user_id: user_id, action: "generate")
+              .where.not(client_ip: nil)
+              .order(created_at: :desc, id: :desc)
+              .limit(MAX_PAIR_AUTH_ROWS_PER_USER + 1)
+              .pluck(:user_id, :client_ip, :user_agent, :created_at)
+          if rows.length > MAX_PAIR_AUTH_ROWS_PER_USER
+            auth_history_truncated = true
+            rows = rows.first(MAX_PAIR_AUTH_ROWS_PER_USER)
+          end
+          rows.each { |id, ip, user_agent, at| index.add_auth_event(id, ip, user_agent, at) }
         end
+        index.mark_auth_history_complete! unless auth_history_truncated
       end
 
       index.evidence_for_pair(user_a_id, user_b_id, shared_ips: shared_ips)
@@ -459,6 +490,7 @@ module ::AccountSecurity
     def empty_auth_pattern_evidence
       {
         "auth_pattern_evidence_version" => AUTH_PATTERN_EVIDENCE_VERSION,
+        "auth_pattern_history_complete" => false,
         "auth_proximity_within_5m_count" => 0,
         "auth_proximity_within_30m_count" => 0,
         "auth_proximity_same_client_within_30m_count" => 0,
@@ -471,8 +503,10 @@ module ::AccountSecurity
         "max_shared_auth_client_signature_users" => nil,
         "auth_client_signature_population_complete" => false,
         "public_ip_transition_match_count" => 0,
+        "public_ip_transition_pattern_count" => 0,
         "aligned_public_ip_transition_24h_count" => 0,
         "aligned_public_ip_transition_7d_count" => 0,
+        "public_ip_transition_unaligned_count" => 0,
         "public_ip_transition_details" => [],
         "public_ip_transition_details_truncated" => false,
         "auth_pattern_score_effect" => "none",
@@ -482,6 +516,7 @@ module ::AccountSecurity
     def empty_evidence
       {
         "temporal_evidence_version" => EVIDENCE_VERSION,
+        "temporal_auth_history_complete" => false,
         "timed_shared_ip_count" => 0,
         "temporal_within_15m_count" => 0,
         "temporal_within_1h_count" => 0,

@@ -8,8 +8,18 @@ module ::AccountSecurity
 
     MAX_NETWORK_GROUP_USERS = 20
     MAX_CANDIDATES_PER_OBSERVATION = 50
+    MAX_EXISTING_CANDIDATES_PER_OBSERVATION = 25
     MAX_SHARED_NETWORKS_IN_PAYLOAD = 8
     MAX_SHARED_IPS_IN_PAYLOAD = CoreIpEvidence::MAX_STORED_SHARED_IPS
+
+    RecalculationResult = Struct.new(:correlation, :outcome, :candidate_now, keyword_init: true)
+
+    CANDIDATE_PRIORITY = {
+      existing: 0,
+      exact_ip: 1,
+      session_signature: 2,
+      shared_network: 3,
+    }.freeze
 
     def observe!(user:, ip:, trigger:, network: nil, session_signature: nil)
       return [] unless enabled?
@@ -20,32 +30,12 @@ module ::AccountSecurity
       public_ip = IpNormalizer.normalize_public(normalized_ip)
       network ||= IpNormalizer.familiarity_network(public_ip) if public_ip.present?
 
-      candidate_ids = Set.new
-      CoreIpEvidence.candidate_user_ids_for_ip(
-        normalized_ip,
-        current_user_id: user.id,
-        max_group_users: MAX_NETWORK_GROUP_USERS,
-      ).each { |id| candidate_ids << id }
-
-      if network.present?
-        add_small_group_ids!(candidate_ids, UserNetwork.where(network_key: network), user.id)
-      end
-
-      if session_signature
-        add_small_group_ids!(
-          candidate_ids,
-          SessionSignature.where(
-            network_key: session_signature.network_key,
-            signature_hash: session_signature.signature_hash,
-          ),
-          user.id,
-        )
-      end
-
-      existing_other_user_ids(user.id).each { |id| candidate_ids << id }
-
-      candidate_ids.delete(user.id)
-      candidate_ids.to_a.first(MAX_CANDIDATES_PER_OBSERVATION).filter_map do |other_id|
+      candidate_user_ids_for_observation(
+        user_id: user.id,
+        normalized_ip: normalized_ip,
+        network: network,
+        session_signature: session_signature,
+      ).filter_map do |other_id|
         recalculate_pair!(user.id, other_id, observed_at: Time.zone.now, source: trigger.to_s)
       end
     rescue StandardError => e
@@ -54,15 +44,30 @@ module ::AccountSecurity
     end
 
     def recalculate_pair!(first_user_id, second_user_id, observed_at: nil, source: nil, precomputed_ip_details: nil, precomputed_supplemental: nil)
-      return nil unless enabled?
+      recalculate_pair_with_result!(
+        first_user_id,
+        second_user_id,
+        observed_at: observed_at,
+        source: source,
+        precomputed_ip_details: precomputed_ip_details,
+        precomputed_supplemental: precomputed_supplemental,
+      ).correlation
+    end
+
+    def recalculate_pair_with_result!(first_user_id, second_user_id, observed_at: nil, source: nil, precomputed_ip_details: nil, precomputed_supplemental: nil)
+      return RecalculationResult.new(outcome: "disabled", candidate_now: false) unless enabled?
 
       user_a_id, user_b_id = [first_user_id.to_i, second_user_id.to_i].sort
-      return nil if user_a_id <= 0 || user_a_id == user_b_id
+      if user_a_id <= 0 || user_a_id == user_b_id
+        return RecalculationResult.new(outcome: "invalid_pair", candidate_now: false)
+      end
 
       users = User.human_users.where(id: [user_a_id, user_b_id], staged: false).index_by(&:id)
       user_a = users[user_a_id]
       user_b = users[user_b_id]
-      return nil if user_a.blank? || user_b.blank?
+      if user_a.blank? || user_b.blank?
+        return RecalculationResult.new(outcome: "ineligible_users", candidate_now: false)
+      end
 
       evidence = build_evidence(
         user_a,
@@ -75,7 +80,10 @@ module ::AccountSecurity
       evidence["score_breakdown"] = result[:breakdown]
       confidence = AccountCorrelationPolicy.confidence(score)
       existing = AccountCorrelation.find_by(user_a_id: user_a_id, user_b_id: user_b_id)
-      return nil if existing.blank? && !AccountCorrelationPolicy.store_candidate?(score, evidence)
+      candidate_now = AccountCorrelationPolicy.store_candidate?(score, evidence)
+      if existing.blank? && !candidate_now
+        return RecalculationResult.new(outcome: "not_candidate", candidate_now: false)
+      end
 
       now = observed_at || Time.zone.now
       correlation = existing || AccountCorrelation.new(
@@ -94,9 +102,18 @@ module ::AccountSecurity
       correlation.save!
       Statistics.increment!(correlation_candidates: 1) if created
       CorrelationIncidentNotifier.notify_if_needed!(correlation, source: source)
-      correlation
+
+      outcome =
+        if created
+          "created"
+        elsif candidate_now
+          "updated"
+        else
+          "retained_below_threshold"
+        end
+      RecalculationResult.new(correlation: correlation, outcome: outcome, candidate_now: candidate_now)
     rescue ActiveRecord::RecordNotUnique
-      recalculate_pair!(
+      recalculate_pair_with_result!(
         user_a_id,
         user_b_id,
         observed_at: observed_at,
@@ -106,7 +123,7 @@ module ::AccountSecurity
       )
     rescue StandardError => e
       Rails.logger.warn("[account_security] account correlation recalculation failed class=#{e.class}")
-      nil
+      RecalculationResult.new(outcome: "error", candidate_now: false)
     end
 
     def build_evidence(user_a, user_b, precomputed_ip_details: nil, precomputed_supplemental: nil)
@@ -133,12 +150,20 @@ module ::AccountSecurity
           span_days: precomputed_supplemental["browser_continuity_span_days"].to_i,
         }
         max_network_users = precomputed_supplemental["max_shared_network_users"].to_i
+        core_auth_history_complete =
+          !precomputed_supplemental.key?("core_auth_history_complete") ||
+            precomputed_supplemental["core_auth_history_complete"] == true
+        exact_ip_population_complete =
+          !precomputed_supplemental.key?("exact_ip_population_complete") ||
+            precomputed_supplemental["exact_ip_population_complete"] == true
         temporal = normalize_temporal_evidence(precomputed_supplemental["temporal_evidence"])
       else
         shared_networks = shared_network_keys(user_a.id, user_b.id).reject { |network| trusted_network?(network) }
         signature = shared_session_signature_summary(user_a.id, user_b.id, shared_networks)
         browser = BrowserContinuityRecorder.shared_summary(user_a.id, user_b.id)
         max_network_users = shared_networks.map { |network| distinct_users_on_network(network) }.max.to_i
+        core_auth_history_complete = true
+        exact_ip_population_complete = true
         temporal = TemporalCorrelationEvidence.for_pair(
           user_a.id,
           user_b.id,
@@ -174,6 +199,8 @@ module ::AccountSecurity
         "shared_history_ip_count" => history_details.length,
         "shared_core_history_ip_count" => core_history_details.length,
         "shared_auth_ip_count" => auth_details.length,
+        "core_auth_history_complete" => core_auth_history_complete,
+        "exact_ip_population_complete" => exact_ip_population_complete,
         "trusted_shared_ip_count" => trusted_details.length,
         "tor_shared_ip_count" => exact_details.count { |detail| detail["tor"] == true },
         "hosting_shared_ip_count" => exact_details.count { |detail| detail["hosting"] == true },
@@ -205,6 +232,7 @@ module ::AccountSecurity
 
       TemporalCorrelationEvidence.empty_evidence.merge(value.slice(
         "temporal_evidence_version",
+        "temporal_auth_history_complete",
         "timed_shared_ip_count",
         "temporal_within_15m_count",
         "temporal_within_1h_count",
@@ -217,6 +245,7 @@ module ::AccountSecurity
         "temporal_ip_details_truncated",
         "temporal_score_effect",
         "auth_pattern_evidence_version",
+        "auth_pattern_history_complete",
         "auth_proximity_within_5m_count",
         "auth_proximity_within_30m_count",
         "auth_proximity_same_client_within_30m_count",
@@ -229,8 +258,10 @@ module ::AccountSecurity
         "max_shared_auth_client_signature_users",
         "auth_client_signature_population_complete",
         "public_ip_transition_match_count",
+        "public_ip_transition_pattern_count",
         "aligned_public_ip_transition_24h_count",
         "aligned_public_ip_transition_7d_count",
+        "public_ip_transition_unaligned_count",
         "public_ip_transition_details",
         "public_ip_transition_details_truncated",
         "auth_pattern_score_effect",
@@ -302,16 +333,69 @@ module ::AccountSecurity
       ids.length
     end
 
-    def add_small_group_ids!(target, scope, current_user_id)
-      ids = scope.distinct.limit(MAX_NETWORK_GROUP_USERS + 1).pluck(:user_id).uniq
-      return if ids.length > MAX_NETWORK_GROUP_USERS
-      ids.each { |id| target << id if id.to_i > 0 && id != current_user_id }
+    def candidate_user_ids_for_observation(user_id:, normalized_ip:, network:, session_signature:)
+      user_id = user_id.to_i
+      candidates = {}
+
+      existing_other_user_ids(user_id).each do |id|
+        add_prioritized_candidate!(candidates, id, CANDIDATE_PRIORITY[:existing], user_id)
+      end
+
+      CoreIpEvidence.candidate_user_ids_for_ip(
+        normalized_ip,
+        current_user_id: user_id,
+        max_group_users: MAX_NETWORK_GROUP_USERS,
+      ).sort.each do |id|
+        add_prioritized_candidate!(candidates, id, CANDIDATE_PRIORITY[:exact_ip], user_id)
+      end
+
+      if session_signature
+        small_group_user_ids(
+          SessionSignature.where(
+            network_key: session_signature.network_key,
+            signature_hash: session_signature.signature_hash,
+          ),
+          user_id,
+        ).each do |id|
+          add_prioritized_candidate!(candidates, id, CANDIDATE_PRIORITY[:session_signature], user_id)
+        end
+      end
+
+      if network.present?
+        small_group_user_ids(UserNetwork.where(network_key: network), user_id).each do |id|
+          add_prioritized_candidate!(candidates, id, CANDIDATE_PRIORITY[:shared_network], user_id)
+        end
+      end
+
+      candidates
+        .sort_by { |id, priority| [priority, id] }
+        .first(MAX_CANDIDATES_PER_OBSERVATION)
+        .map(&:first)
+    end
+
+    def add_prioritized_candidate!(target, candidate_id, priority, current_user_id)
+      candidate_id = candidate_id.to_i
+      return if candidate_id <= 0 || candidate_id == current_user_id.to_i
+
+      current_priority = target[candidate_id]
+      target[candidate_id] = priority if current_priority.nil? || priority < current_priority
+    end
+
+    def small_group_user_ids(scope, current_user_id)
+      ids = scope.distinct.order(:user_id).limit(MAX_NETWORK_GROUP_USERS + 1).pluck(:user_id).map(&:to_i).uniq
+      return [] if ids.length > MAX_NETWORK_GROUP_USERS
+
+      ids.select { |id| id.positive? && id != current_user_id.to_i }
     end
 
     def existing_other_user_ids(user_id)
-      first = AccountCorrelation.where(user_a_id: user_id).limit(MAX_CANDIDATES_PER_OBSERVATION).pluck(:user_b_id)
-      second = AccountCorrelation.where(user_b_id: user_id).limit(MAX_CANDIDATES_PER_OBSERVATION).pluck(:user_a_id)
-      (first + second).uniq.first(MAX_CANDIDATES_PER_OBSERVATION)
+      AccountCorrelation
+        .where("user_a_id = :user_id OR user_b_id = :user_id", user_id: user_id.to_i)
+        .order(score: :desc, last_seen_at: :desc, id: :asc)
+        .limit(MAX_EXISTING_CANDIDATES_PER_OBSERVATION)
+        .pluck(:user_a_id, :user_b_id)
+        .map { |user_a_id, user_b_id| user_a_id.to_i == user_id.to_i ? user_b_id.to_i : user_a_id.to_i }
+        .uniq
     end
 
     def both_source?(detail, source)

@@ -196,37 +196,66 @@ module ::AccountSecurity
 
     def persist_intelligence(existing:, score:, data:, tor_match:, blacklist_match:, provider_checked_at:)
       now = Time.zone.now
+      provider_data = data.is_a?(Hash) ? data : {}
+      provider_data_present = provider_data.present?
       risk = RiskPolicy.risk_level(score)
-      last_reported = parse_time(data["lastReportedAt"])
+      last_reported =
+        if provider_data_present
+          parse_time(provider_data["lastReportedAt"])
+        else
+          existing&.last_reported_at
+        end
+      distinct_reporters =
+        provider_data_present ? provider_data["numDistinctUsers"] : existing&.distinct_reporters
       evidence = RiskPolicy.evidence_strength(
         score: score,
         last_reported_at: last_reported,
-        distinct_reporters: data["numDistinctUsers"],
+        distinct_reporters: distinct_reporters,
         local_blacklist_match: blacklist_match,
       )
       record = existing || IpIntelligence.new(ip_address: @ip, first_seen_at: now)
-      record.assign_attributes(
+
+      source_summary =
+        if provider_data_present
+          {
+            "provider" => "abuseipdb",
+            "is_whitelisted" => provider_data["isWhitelisted"] == true,
+            "local_blacklist" => blacklist_match == true,
+            "schema_version" => 1,
+          }
+        else
+          previous = record.source_summary.is_a?(Hash) ? record.source_summary.deep_dup : {}
+          previous["provider"] ||= "local_feed"
+          previous["local_blacklist"] = blacklist_match == true
+          previous["schema_version"] = 1
+          previous
+        end
+
+      attributes = {
         risk_level: risk,
         evidence_strength: evidence,
         primary_score: score,
-        total_reports: data["totalReports"],
-        distinct_reporters: data["numDistinctUsers"],
-        last_reported_at: last_reported,
-        usage_type: data["usageType"],
-        isp: data["isp"],
-        domain: data["domain"],
-        country_code: data["countryCode"],
         is_tor: tor_match,
         local_blacklist_match: blacklist_match,
         provider_checked_at: provider_checked_at,
         next_check_after: now + CachePolicy.ttl_for(risk),
         last_seen_at: now,
-        source_summary: {
-          "provider" => data.present? ? "abuseipdb" : "local_feed",
-          "is_whitelisted" => data["isWhitelisted"] == true,
-          "schema_version" => 1,
-        },
-      )
+        source_summary: source_summary,
+      }
+
+      if provider_data_present
+        attributes.merge!(
+          total_reports: provider_data["totalReports"],
+          distinct_reporters: provider_data["numDistinctUsers"],
+          last_reported_at: last_reported,
+          usage_type: provider_data["usageType"],
+          isp: provider_data["isp"],
+          domain: provider_data["domain"],
+          country_code: provider_data["countryCode"],
+        )
+      end
+
+      record.assign_attributes(attributes)
       record.save!
       record
     end

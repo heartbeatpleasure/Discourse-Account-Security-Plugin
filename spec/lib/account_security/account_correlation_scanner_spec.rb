@@ -93,4 +93,82 @@ RSpec.describe AccountSecurity::AccountCorrelationScanner do
     expect(diagnostics[:existing_pairs_added]).to be >= 1
   end
 
+
+  it "rescans every persisted correlation even when new-pair discovery is truncated" do
+    existing_a = Fabricate(:user)
+    existing_b = Fabricate(:user)
+    discovery_a = Fabricate(:user)
+    discovery_b = Fabricate(:user)
+    now = Time.zone.now
+    AccountSecurity::AccountCorrelation.create!(
+      user_a_id: [existing_a.id, existing_b.id].min,
+      user_b_id: [existing_a.id, existing_b.id].max,
+      score: 50,
+      confidence: "strong",
+      status: "open",
+      evidence: {},
+      first_seen_at: now,
+      last_seen_at: now,
+    )
+
+    exact_index = instance_double(AccountSecurity::CoreIpEvidence::ScanIndex, diagnostics: { auth_log_truncated: false })
+    allow(exact_index).to receive(:shared_details).and_return([])
+    scan_context = instance_double(AccountSecurity::AccountCorrelationScanContext)
+    allow(scan_context).to receive(:evidence_for_pair).and_return({})
+    temporal_index = instance_double(AccountSecurity::TemporalCorrelationEvidence::ScanIndex)
+    allow(temporal_index).to receive(:evidence_for_pair).and_return(AccountSecurity::TemporalCorrelationEvidence.empty_evidence)
+    allow(described_class).to receive(:build_discovery_context).and_return(
+      [
+        [[discovery_a.id, discovery_b.id].sort],
+        true,
+        exact_index,
+        scan_context,
+        temporal_index,
+        { discovery_pairs_selected: 1, discovery_truncated: true },
+      ],
+    )
+    allow(AccountSecurity::SessionSignatureRecorder).to receive(:backfill_active_tokens!).and_return(0)
+    allow(AccountSecurity::Statistics).to receive(:increment!)
+
+    seen_pairs = []
+    allow(AccountSecurity::AccountCorrelationService).to receive(:recalculate_pair_with_result!) do |a, b, **_kwargs|
+      pair = [a, b].sort
+      seen_pairs << pair
+      outcome = pair == [existing_a.id, existing_b.id].sort ? "updated" : "created"
+      AccountSecurity::AccountCorrelationService::RecalculationResult.new(outcome: outcome, candidate_now: true)
+    end
+
+    scan = described_class.run!(source: "manual")
+
+    expect(seen_pairs).to include([existing_a.id, existing_b.id].sort)
+    expect(seen_pairs).to include([discovery_a.id, discovery_b.id].sort)
+    expect(scan[:truncated]).to eq(true)
+    expect(scan[:existing_pairs_processed]).to eq(1)
+    expect(scan[:discovery_pairs_processed]).to eq(1)
+    expect(scan[:new_candidates]).to eq(1)
+    expect(scan[:existing_candidates_updated]).to eq(1)
+    expect(scan.dig(:diagnostics, :existing_pairs_total)).to eq(1)
+  end
+
+  it "recovers a stale running status instead of blocking scans for the status TTL" do
+    old_time = (described_class::STALE_STATUS_AFTER + 1.minute).seconds.ago.iso8601
+    Discourse.redis.set(
+      described_class::STATUS_KEY,
+      {
+        state: "running",
+        started_at: old_time,
+        heartbeat_at: old_time,
+        source: "manual",
+      }.to_json,
+      ex: described_class::STATUS_TTL,
+    )
+
+    scan = described_class.status
+
+    expect(scan[:state]).to eq("failed")
+    expect(scan[:error_code]).to eq("scan_stale")
+    expect(scan[:stale_recovered]).to eq(true)
+    expect(scan[:completed_at]).to be_present
+  end
+
 end

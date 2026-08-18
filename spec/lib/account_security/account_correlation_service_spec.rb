@@ -104,4 +104,52 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(serialized).not_to include("closest_b_at")
   end
 
+  it "prioritizes realtime candidates deterministically before applying the safety limit" do
+    session_signature = Struct.new(:network_key, :signature_hash).new("8.8.8.0/24", "a" * 64)
+
+    allow(described_class).to receive(:existing_other_user_ids).with(user_a.id).and_return([90, 40])
+    allow(AccountSecurity::CoreIpEvidence).to receive(:candidate_user_ids_for_ip).and_return([70, 30])
+    allow(described_class).to receive(:small_group_user_ids).and_return([60, 20], [50, 10])
+
+    ids = described_class.candidate_user_ids_for_observation(
+      user_id: user_a.id,
+      normalized_ip: "8.8.8.8",
+      network: "8.8.8.0/24",
+      session_signature: session_signature,
+    )
+
+    expect(ids).to eq([40, 90, 30, 70, 20, 60, 10, 50])
+  end
+
+  it "reports when an existing pair is retained only for investigation after falling below the current storage threshold" do
+    now = Time.zone.now
+    [user_a, user_b].each do |user|
+      AccountSecurity::UserNetwork.create!(
+        user_id: user.id,
+        network_key: "8.8.8.0/24",
+        address_family: "ipv4",
+        first_seen_at: now,
+        last_seen_at: now,
+        successful_login_count: 1,
+      )
+    end
+    AccountSecurity::AccountCorrelation.create!(
+      user_a_id: [user_a.id, user_b.id].min,
+      user_b_id: [user_a.id, user_b.id].max,
+      score: 50,
+      confidence: "strong",
+      status: "open",
+      evidence: {},
+      first_seen_at: now,
+      last_seen_at: now,
+    )
+
+    result = described_class.recalculate_pair_with_result!(user_a.id, user_b.id, source: "spec")
+
+    expect(result.outcome).to eq("retained_below_threshold")
+    expect(result.candidate_now).to eq(false)
+    expect(result.correlation).to be_present
+    expect(result.correlation.evidence["shared_network_count"]).to eq(1)
+  end
+
 end

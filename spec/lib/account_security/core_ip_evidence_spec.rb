@@ -71,4 +71,27 @@ RSpec.describe AccountSecurity::CoreIpEvidence do
       "isp" => "Example Infrastructure",
     )
   end
+
+  it "uses the most recent distinct authentication-IP relations when the full-scan safety cap is reached" do
+    stub_const("AccountSecurity::CoreIpEvidence::MAX_AUTH_INDEX_ROWS", 2)
+    recent_ip = "8.8.8.8"
+    old_ip = "1.1.1.1"
+    base = 10.days.ago.change(usec: 0)
+
+    UserAuthTokenLog.create!(user_id: user_a.id, action: "generate", client_ip: old_ip, created_at: base)
+    UserAuthTokenLog.create!(user_id: user_b.id, action: "generate", client_ip: old_ip, created_at: base + 1.minute)
+    UserAuthTokenLog.create!(user_id: user_a.id, action: "generate", client_ip: recent_ip, created_at: 1.hour.ago)
+    UserAuthTokenLog.create!(user_id: user_b.id, action: "generate", client_ip: recent_ip, created_at: 30.minutes.ago)
+
+    index = described_class.build_scan_index
+    recent = index.shared_details(user_a.id, user_b.id).find { |detail| detail["ip_address"] == recent_ip }
+    old = index.shared_details(user_a.id, user_b.id).find { |detail| detail["ip_address"] == old_ip }
+
+    expect(index.diagnostics[:auth_log_truncated]).to eq(true)
+    expect(recent).to be_present
+    expect(recent["sources_a"]).to include("auth_session")
+    expect(recent["sources_b"]).to include("auth_session")
+    expect(old).to be_nil
+  end
+
 end
