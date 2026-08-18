@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.13.0
+# version: 0.14.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"

@@ -1,6 +1,7 @@
 import Controller from "@ember/controller";
 import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
+import { schedule } from "@ember/runloop";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import getURL from "discourse/lib/get-url";
@@ -16,6 +17,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @tracked confidence = "";
   @tracked search = "";
   @tracked page = 1;
+  @tracked activeView = "groups";
+  @tracked viewInitialized = false;
 
   resetState() {
     this.data = undefined;
@@ -25,6 +28,74 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     this.confidence = "";
     this.search = "";
     this.page = 1;
+    this.activeView = "groups";
+    this.viewInitialized = false;
+  }
+
+  get isGroupsView() {
+    return this.activeView === "groups";
+  }
+
+  get isSharedIpsView() {
+    return this.activeView === "shared_ips";
+  }
+
+  get isPairsView() {
+    return this.activeView === "pairs";
+  }
+
+  get activeTabId() {
+    return `account-security-correlation-tab-${this.activeView}`;
+  }
+
+  initializeView(data) {
+    if (this.viewInitialized || !data) {
+      return;
+    }
+
+    if ((data.account_groups || []).length > 0) {
+      this.activeView = "groups";
+    } else if ((data.shared_ip_groups || []).length > 0) {
+      this.activeView = "shared_ips";
+    } else {
+      this.activeView = "pairs";
+    }
+    this.viewInitialized = true;
+  }
+
+  @action
+  selectView(view) {
+    if (!["groups", "shared_ips", "pairs"].includes(view)) {
+      return;
+    }
+    this.activeView = view;
+    this.viewInitialized = true;
+  }
+
+  @action
+  navigateViews(index, event) {
+    const views = ["groups", "shared_ips", "pairs"];
+    let nextIndex;
+
+    if (event.key === "ArrowLeft") {
+      nextIndex = (index - 1 + views.length) % views.length;
+    } else if (event.key === "ArrowRight") {
+      nextIndex = (index + 1) % views.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = views.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    this.selectView(views[nextIndex]);
+    schedule("afterRender", () => {
+      document
+        .getElementById(`account-security-correlation-tab-${views[nextIndex]}`)
+        ?.focus();
+    });
   }
 
   sourceLabel(source) {
@@ -691,6 +762,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         },
       });
       this.data = this.decorateData(data);
+      this.initializeView(this.data);
     } catch (error) {
       popupAjaxError(error);
     } finally {
@@ -774,20 +846,18 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
 
   @action
   focusPair(pairId) {
-    const element = document.getElementById(`correlation-${pairId}`);
-    if (!element) {
-      return;
-    }
+    this.activeView = "pairs";
+    this.viewInitialized = true;
 
-    element.open = true;
-    let parent = element.parentElement;
-    while (parent) {
-      if (parent.tagName === "DETAILS") {
-        parent.open = true;
+    schedule("afterRender", () => {
+      const element = document.getElementById(`correlation-${pairId}`);
+      if (!element) {
+        return;
       }
-      parent = parent.parentElement;
-    }
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
+
+      element.open = true;
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   @action
