@@ -279,6 +279,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       "status_changed",
       "note_added",
       "primary_account_changed",
+      "duplicate_user_note_added",
     ].includes(review.action)
       ? review.action
       : "note_added";
@@ -310,6 +311,21 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     const userA = this.decorateUser(item.user_a);
     const userB = this.decorateUser(item.user_b);
     const primaryUser = this.decorateUser(item.primary_user);
+    const rawPolicyActions = item.policy_actions || {};
+    const additionalUserId = Number(rawPolicyActions.additional_user_id || 0);
+    const additionalUser =
+      userA?.id === additionalUserId
+        ? userA
+        : userB?.id === additionalUserId
+          ? userB
+          : null;
+    const policyActions = {
+      ...rawPolicyActions,
+      additional_user: additionalUser,
+      duplicate_user_note_added_at_display: formatAccountSecurityDateTime(
+        rawPolicyActions.duplicate_user_note_added_at
+      ),
+    };
     const signals = [];
 
     if (evidence.shared_exact_ip_count > 0) {
@@ -348,6 +364,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       user_a: userA,
       user_b: userB,
       primary_user: primaryUser,
+      policy_actions: policyActions,
       review_history: (item.review_history || []).map((review) =>
         this.decorateReview(review)
       ),
@@ -900,6 +917,21 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
           confirmed: status === "confirmed_duplicate",
         },
       });
+      await this.loadCorrelations();
+      return true;
+    } catch (error) {
+      popupAjaxError(error);
+      return false;
+    }
+  }
+
+  @action
+  async addDuplicateUserNote(item) {
+    try {
+      await ajax(
+        `/admin/plugins/account-security/correlations/${item.id}/duplicate-user-note.json`,
+        { type: "POST", data: { confirmed: true } }
+      );
       await this.loadCorrelations();
       return true;
     } catch (error) {

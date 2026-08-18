@@ -210,9 +210,14 @@ module ::AccountSecurity
       page = [page, max_page].min
       items = scope.offset((page - 1) * per_page).limit(per_page).to_a
       review_history = CorrelationInvestigationService.history_for(items.map(&:id))
+      policy_action_state = CorrelationPolicyActions.state_for(items.map(&:id))
       group_index = AccountGroupBuilder.build_index
       serialized_items = items.map do |item|
-        serialize_correlation(item, review_history: review_history[item.id]).merge(
+        serialize_correlation(
+          item,
+          review_history: review_history[item.id],
+          policy_action_state: policy_action_state.fetch(item.id, []),
+        ).merge(
           account_group_key: group_index[:pair_to_group][item.id],
         )
       end
@@ -267,9 +272,44 @@ module ::AccountSecurity
         details: { correlation_id: correlation.id, status: status },
       )
       history = CorrelationInvestigationService.history_for([correlation.id])[correlation.id]
+      policy_action_state = CorrelationPolicyActions.state_for([correlation.id]).fetch(correlation.id, [])
       render_json_dump(
         success: true,
-        item: serialize_correlation(correlation, review_history: history),
+        item: serialize_correlation(
+          correlation,
+          review_history: history,
+          policy_action_state: policy_action_state,
+        ),
+      )
+    end
+
+    def add_correlation_duplicate_user_note
+      rate_limit!("correlation-user-note", 10)
+      require_confirmation!
+      correlation = find_correlation!
+      result = CorrelationPolicyActions.add_duplicate_user_note!(correlation: correlation, actor: current_user)
+      unless result
+        return render_json_error(
+          I18n.t("admin.account_security.correlations.policy_user_note_failed"),
+          status: :unprocessable_entity,
+        )
+      end
+
+      correlation.reload
+      history = CorrelationInvestigationService.history_for([correlation.id])[correlation.id]
+      policy_action_state = CorrelationPolicyActions.state_for([correlation.id]).fetch(correlation.id, [])
+      render_json_dump(
+        success: true,
+        item: serialize_correlation(
+          correlation,
+          review_history: history,
+          policy_action_state: policy_action_state,
+        ),
+      )
+    rescue CorrelationPolicyActions::NotEligible
+      render_json_error(
+        I18n.t("admin.account_security.correlations.policy_user_note_unavailable"),
+        status: :unprocessable_entity,
       )
     end
 
@@ -397,7 +437,7 @@ module ::AccountSecurity
       RiskEvent.includes(:user, :reviewed_by, :ip_intelligence).find(positive_integer_param!(:id))
     end
     def find_correlation!
-      AccountCorrelation.includes(:user_a, :user_b, :reviewed_by).find(positive_integer_param!(:id))
+      AccountCorrelation.includes(:user_a, :user_b, :reviewed_by, :primary_user).find(positive_integer_param!(:id))
     end
 
 
@@ -588,7 +628,7 @@ module ::AccountSecurity
       }
     end
 
-    def serialize_correlation(item, review_history: nil)
+    def serialize_correlation(item, review_history: nil, policy_action_state: nil)
       evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
       shared_ip_details = serialize_shared_ip_details(evidence["shared_ip_details"])
       {
@@ -605,6 +645,7 @@ module ::AccountSecurity
         reviewed_by: item.reviewed_by && { id: item.reviewed_by.id, username: item.reviewed_by.username },
         primary_user: item.primary_user && serialize_correlation_user(item.primary_user),
         review_history: Array(review_history).map { |review| serialize_correlation_review(review) },
+        policy_actions: CorrelationPolicyActions.payload(item, note_actions: policy_action_state),
         evidence: {
           scoring_version: evidence["scoring_version"].to_i,
           shared_registration_ip: evidence["shared_registration_ip"] == true,

@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.15.0
+# version: 0.16.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.15.0"
+  PLUGIN_VERSION = "0.16.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -63,6 +63,7 @@ after_initialize do
     lib/account_security/account_correlation_policy.rb
     lib/account_security/account_correlation_service.rb
     lib/account_security/correlation_investigation_service.rb
+    lib/account_security/correlation_policy_actions.rb
     lib/account_security/account_correlation_scan_context.rb
     lib/account_security/account_correlation_scanner.rb
     lib/account_security/account_group_builder.rb
@@ -235,6 +236,8 @@ after_initialize do
         defaults: { format: :json }, constraints: AdminConstraint.new
     put "/admin/plugins/account-security/correlations/:id.json" => "account_security/admin#update_correlation",
         defaults: { format: :json }, constraints: AdminConstraint.new
+    post "/admin/plugins/account-security/correlations/:id/duplicate-user-note.json" => "account_security/admin#add_correlation_duplicate_user_note",
+         defaults: { format: :json }, constraints: AdminConstraint.new
     post "/admin/plugins/account-security/correlations/rebuild.json" => "account_security/admin#rebuild_correlations",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/trusted-networks.json" => "account_security/admin#trusted_networks",

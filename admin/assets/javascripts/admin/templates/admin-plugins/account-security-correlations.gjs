@@ -770,6 +770,52 @@ export default RouteTemplate(
         min-width: 8.5rem;
         white-space: nowrap;
       }
+      .as-correlation__policy-actions {
+        margin-top: .9rem;
+      }
+      .as-correlation__policy-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: .7rem;
+        margin-top: .75rem;
+      }
+      .as-correlation__policy-card {
+        min-width: 0;
+        padding: .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--secondary);
+      }
+      .as-correlation__policy-card--action {
+        border-color: var(--tertiary-low);
+      }
+      .as-correlation__policy-card h5 {
+        margin: .55rem 0 .25rem;
+        font-size: var(--font-up-1);
+        overflow-wrap: anywhere;
+      }
+      .as-correlation__policy-state {
+        display: flex;
+        flex-wrap: wrap;
+        gap: .35rem 1rem;
+        margin-top: .65rem;
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+      }
+      .as-correlation__policy-note {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: .75rem;
+        padding: .8rem .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--secondary);
+      }
+      .as-correlation__policy-note > :first-child { min-width: 0; }
+      .as-correlation__policy-note .btn,
+      .as-correlation__policy-note .as-correlation__badge { flex: 0 0 auto; }
       .as-correlation__history {
         margin-top: .9rem;
       }
@@ -833,6 +879,7 @@ export default RouteTemplate(
         .as-correlation__filters { grid-template-columns: 1fr 1fr; }
         .as-correlation__candidate-meta { grid-template-columns: 1fr; }
         .as-correlation__investigation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .as-correlation__policy-grid { grid-template-columns: 1fr; }
         .as-correlation__group-accounts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .as-correlation__account-group-anchor-list { grid-template-columns: 1fr; }
         .as-correlation__temporal-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }

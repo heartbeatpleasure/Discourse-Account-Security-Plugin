@@ -24,7 +24,7 @@ nl:
     account_security_blacklist_sync_enabled: "De AbuseIPDB high-confidence blacklist lokaal vier keer per dag synchroniseren."
     account_security_tor_feed_enabled: "De officiële Tor-exitlijst elk uur lokaal synchroniseren. Tor is alleen context en verhoogt zelfstandig nooit het risico."
     account_security_abuse_reporting_enabled: "Sta handmatige provider-rapportage alleen toe voor lokaal bevestigd authenticatiemisbruik waarvan de drempel is overschreden en dat tevens door een High/Critical providersignaal wordt bevestigd. Standaard UIT; er wordt nooit automatisch gerapporteerd."
-    account_security_user_notes_enabled: "Voeg één beknopte User Note toe bij een geëscaleerd High/Critical-event wanneer de Discourse User Notes-plugin beschikbaar is. Standaard UIT. De notitie bevat geen ruw IP-adres of providerscore."
+    account_security_user_notes_enabled: "Sta Account Security toe beknopte User Notes toe te voegen wanneer de Discourse User Notes-plugin beschikbaar is. Dit geldt voor geschikte geëscaleerde High/Critical-events en voor een door een beheerder aangevraagde notitie op het extra account van een bevestigd dubbel-accountpaar. Standaard UIT. Notities bevatten geen ruwe IP-adressen, providerscores of ruwe correlatie-evidence."
     account_security_temporary_ip_blocks_enabled: "Sta beheerders toe om vanuit geschikte High/Critical-events expliciete tijdelijke Discourse IP-blokkades aan te maken. Standaard UIT. Account Security neemt nooit een bestaande screeningregel over."
     account_security_staff_notifications_enabled: "Stuur per kwalificerend incident één privébericht vanuit het systeemaccount naar de ingestelde staffgroepen. Standaard UIT."
     account_security_correlation_notifications_enabled: "Stuur gededupliceerde staff-privéberichten bij nieuwe realtime Sterke/Zeer sterke accountcorrelatiebevindingen. Standaard UIT. Volledige handmatige/geplande historische scans veroorzaken nooit een notificatiestroom."
@@ -58,6 +58,8 @@ nl:
       correlations:
         disabled: "Accountcorrelatie is uitgeschakeld in de instellingen."
         review_note_required: "Voeg een onderzoeksnotitie toe voordat je deze classificatie opslaat."
+        policy_user_note_unavailable: "Een User Note voor een dubbel account is niet beschikbaar. Bevestig eerst het dubbele account, selecteer een te behouden account, schakel User Notes in en controleer dat voor deze accountkeuze nog geen notitie is toegevoegd."
+        policy_user_note_failed: "De User Note voor het dubbele account kon niet worden toegevoegd. Er is geen accountmoderatieactie uitgevoerd."
       events:
         user_note_unavailable: "Voor dit event kan geen User Note worden aangemaakt."
         existing_ip_screening: "Voor dit adres geldt al een Discourse IP-screeningregel. Account Security vervangt deze niet en neemt deze niet over."
@@ -66,6 +68,7 @@ nl:
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} is geëscaleerd voor staffbeoordeling met ernst %{severity}. Dit securitysignaal stelt op zichzelf geen misbruik door het account vast."
+    correlation_duplicate_user_note: "Account Security-correlatie #%{correlation_id} is handmatig door staff geclassificeerd als bevestigd dubbel account. Staff heeft @%{primary_username} geselecteerd als het te behouden account. Deze interne notitie legt alleen de staffbeslissing vast; Account Security heeft dit account niet automatisch geschorst, gedeactiveerd, samengevoegd of verwijderd."
     correlation_notification:
       title: "Account Security: %{confidence} accountcorrelatie"
       unknown_user: "Onbekend account"

@@ -6,13 +6,19 @@ module ::AccountSecurity
 
     NOTE_MUTEX_PREFIX = "account-security-user-note"
 
-    def eligible?(event, automatic: false)
+    def available?
       return false unless SiteSetting.account_security_user_notes_enabled
-      return false unless event&.user&.persisted?
-      return false unless event.severity.in?(%w[high critical])
       return false unless defined?(::DiscourseUserNotes)
       return false unless SiteSetting.respond_to?(:user_notes_enabled) && SiteSetting.user_notes_enabled
       return false unless ::DiscourseUserNotes.respond_to?(:add_note)
+
+      true
+    end
+
+    def eligible?(event, automatic: false)
+      return false unless available?
+      return false unless event&.user&.persisted?
+      return false unless event.severity.in?(%w[high critical])
       return false if automatic && !automatic_escalation?(event)
 
       true

@@ -18,6 +18,7 @@ module ::AccountSecurity
       notification_suppression_released
       abuse_reported
       account_correlation_review_changed
+      account_correlation_user_note_added
       account_correlation_scan_started
     ].freeze
 

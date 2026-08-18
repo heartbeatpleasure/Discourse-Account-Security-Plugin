@@ -18,6 +18,7 @@ export default class AccountSecurityCorrelationPair extends Component {
   @tracked reviewNote = "";
   @tracked primaryUserId = "";
   @tracked isSaving = false;
+  @tracked isPolicyActionWorking = false;
 
   constructor(owner, args) {
     super(owner, args);
@@ -78,6 +79,49 @@ export default class AccountSecurityCorrelationPair extends Component {
   @action
   setReviewNote(event) {
     this.reviewNote = event.target.value;
+  }
+
+  get persistedConfirmedDuplicate() {
+    return this.args.item.status === "confirmed_duplicate";
+  }
+
+  get policyPrimaryUser() {
+    return this.args.item.primary_user || null;
+  }
+
+  get policyAdditionalUser() {
+    return this.args.item.policy_actions?.additional_user || null;
+  }
+
+  get keepAccountNeedsAttention() {
+    return Boolean(
+      this.policyPrimaryUser &&
+        (!this.policyPrimaryUser.active || this.policyPrimaryUser.suspended)
+    );
+  }
+
+  @action
+  async addDuplicateUserNote() {
+    if (this.isPolicyActionWorking) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        i18n("admin.account_security.correlations.policy_user_note_confirm", {
+          username: this.policyAdditionalUser?.username || "—",
+        })
+      )
+    ) {
+      return;
+    }
+
+    this.isPolicyActionWorking = true;
+    try {
+      await this.args.controller.addDuplicateUserNote(this.args.item);
+    } finally {
+      this.isPolicyActionWorking = false;
+    }
   }
 
   @action
@@ -370,6 +414,69 @@ export default class AccountSecurityCorrelationPair extends Component {
               <button class="btn btn-primary" type="button" disabled={{this.saveDisabled}} {{on "click" this.saveReview}}>{{i18n "admin.account_security.correlations.save_review"}}</button>
             </div>
           </div>
+
+          {{#if this.persistedConfirmedDuplicate}}
+            <section class="as-correlation__policy-actions">
+              <div class="as-correlation__evidence-title">
+                <h4>{{i18n "admin.account_security.correlations.policy_actions_title"}}</h4>
+                <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.policy_actions_description"}}</p>
+              </div>
+
+              {{#if @item.policy_actions.ready}}
+                {{#if this.keepAccountNeedsAttention}}
+                  <div class="as-correlation__warning">{{i18n "admin.account_security.correlations.policy_keep_account_warning"}}</div>
+                {{/if}}
+
+                <div class="as-correlation__policy-grid">
+                  <article class="as-correlation__policy-card">
+                    <span class="as-correlation__badge">{{i18n "admin.account_security.correlations.policy_keep_role"}}</span>
+                    <h5>{{this.policyPrimaryUser.username}}</h5>
+                    <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.policy_keep_description"}}</p>
+                    <div class="as-correlation__policy-state">
+                      <span>{{i18n "admin.account_security.correlations.account_active"}}: {{if this.policyPrimaryUser.active (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</span>
+                      <span>{{i18n "admin.account_security.correlations.account_suspended"}}: {{if this.policyPrimaryUser.suspended (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</span>
+                    </div>
+                    <div class="as-correlation__account-actions">
+                      <a class="btn btn-small" href={{this.policyPrimaryUser.profile_url}}>{{i18n "admin.account_security.correlations.open_profile"}}</a>
+                      <a class="btn btn-small" href={{this.policyPrimaryUser.admin_url}}>{{i18n "admin.account_security.correlations.open_admin_user"}}</a>
+                    </div>
+                  </article>
+
+                  <article class="as-correlation__policy-card as-correlation__policy-card--action">
+                    <span class="as-correlation__badge">{{i18n "admin.account_security.correlations.policy_additional_role"}}</span>
+                    <h5>{{this.policyAdditionalUser.username}}</h5>
+                    <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.policy_additional_description"}}</p>
+                    <div class="as-correlation__policy-state">
+                      <span>{{i18n "admin.account_security.correlations.account_active"}}: {{if this.policyAdditionalUser.active (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</span>
+                      <span>{{i18n "admin.account_security.correlations.account_suspended"}}: {{if this.policyAdditionalUser.suspended (i18n "admin.account_security.correlations.yes") (i18n "admin.account_security.correlations.no")}}</span>
+                    </div>
+                    <div class="as-correlation__account-actions">
+                      <a class="btn btn-small" href={{this.policyAdditionalUser.profile_url}}>{{i18n "admin.account_security.correlations.open_profile"}}</a>
+                      <a class="btn btn-primary btn-small" href={{this.policyAdditionalUser.admin_url}}>{{i18n "admin.account_security.correlations.policy_review_core_action"}}</a>
+                    </div>
+                  </article>
+                </div>
+
+                <div class="as-correlation__policy-note">
+                  <div>
+                    <strong>{{i18n "admin.account_security.correlations.policy_user_note_title"}}</strong>
+                    <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.policy_user_note_description"}}</p>
+                  </div>
+                  {{#if @item.policy_actions.duplicate_user_note_added_at}}
+                    <span class="as-correlation__badge">{{i18n "admin.account_security.correlations.policy_user_note_added"}} {{@item.policy_actions.duplicate_user_note_added_at_display}}</span>
+                  {{else if @item.policy_actions.duplicate_user_note_available}}
+                    <button class="btn" type="button" disabled={{this.isPolicyActionWorking}} {{on "click" this.addDuplicateUserNote}}>{{i18n "admin.account_security.correlations.policy_user_note_add"}}</button>
+                  {{else}}
+                    <span class="as-correlation__muted">{{i18n "admin.account_security.correlations.policy_user_note_not_available"}}</span>
+                  {{/if}}
+                </div>
+
+                <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.policy_manual_only_notice"}}</div>
+              {{else}}
+                <div class="as-correlation__warning">{{i18n "admin.account_security.correlations.policy_select_keep_first"}}</div>
+              {{/if}}
+            </section>
+          {{/if}}
 
           {{#if @item.review_history.length}}
             <div class="as-correlation__history">

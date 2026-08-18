@@ -24,7 +24,7 @@ en:
     account_security_blacklist_sync_enabled: "Synchronize the AbuseIPDB high-confidence blacklist locally four times per day."
     account_security_tor_feed_enabled: "Synchronize the official Tor exit list locally once per hour. Tor is context only and never raises risk by itself."
     account_security_abuse_reporting_enabled: "Permit manual provider reporting only for a locally confirmed, threshold-exceeded authentication-abuse event that is also corroborated by a High/Critical provider signal. OFF by default; no report is sent automatically."
-    account_security_user_notes_enabled: "Add one concise User Note for a High/Critical escalated event when the Discourse User Notes plugin is available. OFF by default. Notes omit the raw IP address and provider score."
+    account_security_user_notes_enabled: "Allow Account Security to add concise User Notes when the Discourse User Notes plugin is available. This covers eligible High/Critical escalated events and an administrator-requested note on the additional account of a confirmed duplicate pair. OFF by default. Notes omit raw IP addresses, provider scores and raw correlation evidence."
     account_security_temporary_ip_blocks_enabled: "Allow administrators to create explicit, time-limited Discourse IP blocks from eligible High/Critical events. OFF by default. Account Security never takes ownership of an existing screening rule."
     account_security_staff_notifications_enabled: "Send one incident-based private message from the system account to the configured staff groups for qualifying escalations. OFF by default."
     account_security_correlation_notifications_enabled: "Send deduplicated staff private messages for new real-time Strong/Very strong account-correlation findings. OFF by default. Full/manual/scheduled historical scans never generate notification floods."
@@ -58,6 +58,8 @@ en:
       correlations:
         disabled: "Account correlation is disabled in settings."
         review_note_required: "Add an investigation note before saving this classification."
+        policy_user_note_unavailable: "A duplicate-account User Note is not available. Confirm the duplicate, select an account to keep, enable User Notes and make sure a note has not already been added for this account choice."
+        policy_user_note_failed: "The duplicate-account User Note could not be added. No account moderation action was performed."
       events:
         user_note_unavailable: "A User Note cannot be created for this event."
         existing_ip_screening: "A Discourse IP screening rule already applies to this address. Account Security will not replace or take ownership of it."
@@ -66,6 +68,7 @@ en:
 
   account_security:
     user_note: "Account Security event #%{event_id}: %{event_type} was escalated for staff review with %{severity} severity. This security signal does not by itself establish account misconduct."
+    correlation_duplicate_user_note: "Account Security correlation #%{correlation_id} was manually classified by staff as a confirmed duplicate. Staff selected @%{primary_username} as the account to keep. This internal note records the staff decision only; Account Security did not automatically suspend, deactivate, merge or delete this account."
 
     correlation_notification:
       title: "Account Security: %{confidence} account correlation"

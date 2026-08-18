@@ -20,6 +20,7 @@ RSpec.describe AccountSecurity::AdminController do
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/correlations.json", {}],
       [:put, "/admin/plugins/account-security/correlations/1.json", { status: "monitor" }],
+      [:post, "/admin/plugins/account-security/correlations/1/duplicate-user-note.json", { confirmed: true }],
       [:post, "/admin/plugins/account-security/correlations/rebuild.json", {}],
       [:get, "/admin/plugins/account-security/trusted-networks.json", {}],
       [:get, "/admin/plugins/account-security/health.json", {}],
@@ -80,6 +81,66 @@ RSpec.describe AccountSecurity::AdminController do
 
     expect(response.status).to eq(400)
     expect(correlation.reload.status).to eq("open")
+  end
+
+  it "requires explicit confirmation before a duplicate-account User Note action" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    user_a_id, user_b_id = [first.id, second.id].sort
+    correlation = AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: 80,
+      confidence: "very_strong",
+      status: "confirmed_duplicate",
+      primary_user_id: user_a_id,
+      evidence: {},
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    sign_in(admin)
+    post "/admin/plugins/account-security/correlations/#{correlation.id}/duplicate-user-note.json"
+
+    expect(response.status).to eq(400)
+    expect(
+      AccountSecurity::CorrelationReview.where(
+        account_correlation_id: correlation.id,
+        action: "duplicate_user_note_added",
+      ).count,
+    ).to eq(0)
+  end
+
+  it "returns policy-action state with a confirmed duplicate pair" do
+    SiteSetting.account_security_enabled = true
+    SiteSetting.account_security_account_correlation_enabled = true
+    first = Fabricate(:user)
+    second = Fabricate(:user)
+    user_a_id, user_b_id = [first.id, second.id].sort
+    correlation = AccountSecurity::AccountCorrelation.create!(
+      user_a_id: user_a_id,
+      user_b_id: user_b_id,
+      score: 80,
+      confidence: "very_strong",
+      status: "confirmed_duplicate",
+      primary_user_id: user_a_id,
+      evidence: {},
+      first_seen_at: Time.zone.now,
+      last_seen_at: Time.zone.now,
+    )
+
+    sign_in(admin)
+    get "/admin/plugins/account-security/correlations.json", params: { status: "confirmed_duplicate" }
+
+    expect(response.status).to eq(200)
+    item = response.parsed_body.fetch("items").find { |entry| entry["id"] == correlation.id }
+    expect(item).to be_present
+    expect(item.dig("policy_actions", "available")).to eq(true)
+    expect(item.dig("policy_actions", "ready")).to eq(true)
+    expect(item.dig("policy_actions", "primary_user_id")).to eq(user_a_id)
+    expect(item.dig("policy_actions", "additional_user_id")).to eq(user_b_id)
   end
 
   it "stores correlation investigation history and an optional account to keep" do

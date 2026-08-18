@@ -4,7 +4,7 @@ module ::AccountSecurity
   class CorrelationReview < ActiveRecord::Base
     self.table_name = "account_security_correlation_reviews"
 
-    ACTIONS = %w[status_changed note_added primary_account_changed].freeze
+    ACTIONS = %w[status_changed note_added primary_account_changed duplicate_user_note_added].freeze
 
     belongs_to :account_correlation,
                class_name: "::AccountSecurity::AccountCorrelation",
