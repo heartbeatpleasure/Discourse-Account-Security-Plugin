@@ -171,6 +171,7 @@ module ::AccountSecurity
         reason: result.reason,
         source: result.source,
         intelligence: serialize_intelligence(result.intelligence),
+        network_context: serialize_network_context(NetworkContext.for_ip(normalized, locale: I18n.locale)),
         recent_users: recent_users_for(normalized),
       )
     end
@@ -219,7 +220,7 @@ module ::AccountSecurity
         strong_open_count: AccountCorrelation.where(status: %w[open monitor], confidence: %w[strong very_strong]).count,
         scoring_refresh_required: scoring_refresh_required,
         temporal_refresh_required: temporal_refresh_required,
-        scan: AccountCorrelationScanner.status,
+        scan: serialize_correlation_scan(AccountCorrelationScanner.status),
         schedule: AccountCorrelationScheduler.schedule_status.slice(:enabled, :next_run_at),
         items: items.map { |item| serialize_correlation(item, review_history: review_history[item.id]) },
       )
@@ -423,6 +424,7 @@ module ::AccountSecurity
       {
         event: serialize_event(event, detail: true),
         intelligence: serialize_intelligence(event.ip_intelligence),
+        network_context: serialize_network_context(NetworkContext.for_ip(event.ip_address, locale: I18n.locale)),
         temporary_block: serialize_temporary_block(temporary_block),
         notification_suppression: serialize_notification_suppression(notification_suppression),
         provider_report: report && {
@@ -519,6 +521,7 @@ module ::AccountSecurity
 
     def serialize_correlation(item, review_history: nil)
       evidence = item.evidence.is_a?(Hash) ? item.evidence : {}
+      shared_ip_details = serialize_shared_ip_details(evidence["shared_ip_details"])
       {
         id: item.id,
         score: item.score.to_i,
@@ -553,7 +556,8 @@ module ::AccountSecurity
           hosting_shared_ip_count: evidence["hosting_shared_ip_count"].to_i,
           mobile_shared_ip_count: evidence["mobile_shared_ip_count"].to_i,
           local_blacklist_shared_ip_count: evidence["local_blacklist_shared_ip_count"].to_i,
-          shared_ip_details: serialize_shared_ip_details(evidence["shared_ip_details"]),
+          shared_ip_details: shared_ip_details,
+          network_context_summary: NetworkContext.context_summary(shared_ip_details),
           shared_network_count: evidence["shared_network_count"].to_i,
           shared_networks: Array(evidence["shared_networks"]).map(&:to_s).first(AccountCorrelationService::MAX_SHARED_NETWORKS_IN_PAYLOAD),
           shared_session_signature_count: evidence["shared_session_signature_count"].to_i,
@@ -614,6 +618,7 @@ module ::AccountSecurity
         ip = IpNormalizer.normalize(raw["ip_address"])
         next if ip.blank?
 
+        maxmind = NetworkContext.maxmind_for_ip(ip, locale: I18n.locale)
         {
           ip_address: ip,
           sources_a: Array(raw["sources_a"]).map(&:to_s) & CoreIpEvidence::SOURCES,
@@ -627,8 +632,82 @@ module ::AccountSecurity
           isp: clean_optional(raw["isp"], 160),
           hosting: raw["hosting"] == true,
           mobile: raw["mobile"] == true,
+          network_context: {
+            maxmind: serialize_maxmind_context(maxmind),
+            score_effect: "none",
+          },
         }
       end
+    end
+
+    def serialize_correlation_scan(scan)
+      return scan unless scan.is_a?(Hash)
+
+      diagnostics = scan[:diagnostics] || scan["diagnostics"]
+      return scan unless diagnostics.is_a?(Hash)
+
+      summaries = diagnostics[:large_ip_group_summaries] || diagnostics["large_ip_group_summaries"]
+      enriched_summaries = Array(summaries).first(CoreIpEvidence::MAX_LARGE_GROUP_SUMMARIES).filter_map do |raw|
+        next unless raw.is_a?(Hash)
+        ip = IpNormalizer.normalize(raw["ip_address"] || raw[:ip_address])
+        next if ip.blank?
+
+        {
+          ip_address: ip,
+          user_count: (raw["user_count"] || raw[:user_count]).to_i,
+          public: raw["public"] == true || raw[:public] == true,
+          trusted: raw["trusted"] == true || raw[:trusted] == true,
+          tor: raw["tor"] == true || raw[:tor] == true,
+          hosting: raw["hosting"] == true || raw[:hosting] == true,
+          mobile: raw["mobile"] == true || raw[:mobile] == true,
+          local_blacklist: raw["local_blacklist"] == true || raw[:local_blacklist] == true,
+          usage_type: clean_optional(raw["usage_type"] || raw[:usage_type], 80),
+          isp: clean_optional(raw["isp"] || raw[:isp], 160),
+          network_context: {
+            maxmind: serialize_maxmind_context(NetworkContext.maxmind_for_ip(ip, locale: I18n.locale)),
+            score_effect: "none",
+          },
+        }
+      end
+
+      scan.merge(diagnostics: diagnostics.merge(large_ip_group_summaries: enriched_summaries))
+    end
+
+    def serialize_network_context(context)
+      return nil unless context.is_a?(Hash)
+
+      {
+        ip_address: IpNormalizer.normalize(context[:ip_address] || context["ip_address"]),
+        public: context[:public] == true || context["public"] == true,
+        trusted: context[:trusted] == true || context["trusted"] == true,
+        tor: context[:tor] == true || context["tor"] == true,
+        local_blacklist: context[:local_blacklist] == true || context["local_blacklist"] == true,
+        hosting: context[:hosting] == true || context["hosting"] == true,
+        mobile: context[:mobile] == true || context["mobile"] == true,
+        usage_type: clean_optional(context[:usage_type] || context["usage_type"], 120),
+        isp: clean_optional(context[:isp] || context["isp"], 160),
+        provider_country_code: clean_optional(context[:provider_country_code] || context["provider_country_code"], 2),
+        maxmind_country_code: clean_optional(context[:maxmind_country_code] || context["maxmind_country_code"], 2),
+        country_mismatch: context[:country_mismatch] == true || context["country_mismatch"] == true,
+        maxmind: serialize_maxmind_context(context[:maxmind] || context["maxmind"]),
+        sources: Array(context[:sources] || context["sources"]).map(&:to_s).first(8),
+      }.compact
+    end
+
+    def serialize_maxmind_context(value)
+      return {} unless value.is_a?(Hash)
+
+      {
+        source: value[:source] || value["source"],
+        asn: positive_integer_value(value[:asn] || value["asn"]),
+        organization: clean_optional(value[:organization] || value["organization"], 160),
+        country: clean_optional(value[:country] || value["country"], 160),
+        country_code: clean_optional(value[:country_code] || value["country_code"], 2),
+        region: clean_optional(value[:region] || value["region"], 160),
+        city: clean_optional(value[:city] || value["city"], 160),
+        location: clean_optional(value[:location] || value["location"], 240),
+        location_is_approximate: value[:location_is_approximate] == true || value["location_is_approximate"] == true,
+      }.compact
     end
 
     def serialize_score_breakdown(value)

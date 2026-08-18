@@ -201,10 +201,26 @@ export default class AccountSecurityCorrelationPair extends Component {
                   <div><strong>{{detail.account_a_sources_label}}:</strong> {{detail.sources_a_display}}</div>
                   <div><strong>{{detail.account_b_sources_label}}:</strong> {{detail.sources_b_display}}</div>
                   <div><strong>{{i18n "admin.account_security.correlations.ip_context"}}:</strong> {{detail.context_display}}</div>
+                  {{#if detail.network_context.network_display}}<div><strong>{{i18n "admin.account_security.correlations.network_asn"}}:</strong> {{detail.network_context.network_display}}</div>{{/if}}
+                  {{#if detail.network_context.location_display}}<div><strong>{{i18n "admin.account_security.correlations.approximate_location"}}:</strong> {{detail.network_context.location_display}}</div>{{/if}}
                   <div>{{detail.seen_by_display}}</div>
+                  {{#if detail.network_context.country_mismatch}}<div class="as-correlation__muted">{{i18n "admin.account_security.correlations.country_mismatch"}}</div>{{/if}}
                 </div>
               </div>
             {{/each}}
+          </div>
+        {{/if}}
+
+        {{#if @item.has_network_context}}
+          <div class="as-correlation__evidence-title">
+            <h4>{{i18n "admin.account_security.correlations.network_context_title"}}</h4>
+            <p class="as-correlation__muted">{{i18n "admin.account_security.correlations.network_context_description"}}</p>
+          </div>
+          <div class="as-correlation__compact-grid">
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.network_context_enriched_ips"}}</div><div class="as-correlation__value">{{@item.network_context_summary.locally_enriched_ip_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.network_context_distinct_asns"}}</div><div class="as-correlation__value">{{@item.network_context_summary.distinct_asn_count}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.network_context_operators"}}</div><div class="as-correlation__value">{{if @item.network_context_summary.organizations_display @item.network_context_summary.organizations_display "—"}}</div></div>
+            <div class="as-correlation__compact-item"><div class="as-correlation__label">{{i18n "admin.account_security.correlations.network_context_countries"}}</div><div class="as-correlation__value">{{if @item.network_context_summary.countries_display @item.network_context_summary.countries_display "—"}}</div></div>
           </div>
         {{/if}}
 

@@ -120,4 +120,43 @@ RSpec.describe AccountSecurity::AdminController do
   end
 
 
+  it "serializes local network context without MaxMind coordinates" do
+    sign_in(admin)
+    allow(AccountSecurity::AssessmentService).to receive(:call).and_return(
+      AccountSecurity::AssessmentService::Result.new(
+        success: true,
+        reason: "local_context",
+        source: "local",
+      ),
+    )
+    allow(AccountSecurity::NetworkContext).to receive(:for_ip).and_return(
+      ip_address: "8.8.8.8",
+      public: true,
+      maxmind: {
+        source: "discourse_geolite2",
+        asn: 15_169,
+        organization: "Example Network",
+        country_code: "US",
+        location: "United States",
+        latitude: 37.4,
+        longitude: -122.1,
+        geoname_ids: [1, 2, 3],
+      },
+    )
+
+    post "/admin/plugins/account-security/lookup.json",
+         params: { account_security_ip: "8.8.8.8" }
+
+    expect(response.status).to eq(200)
+    maxmind = response.parsed_body.dig("network_context", "maxmind")
+    expect(maxmind).to include(
+      "source" => "discourse_geolite2",
+      "asn" => 15_169,
+      "organization" => "Example Network",
+    )
+    expect(maxmind).not_to have_key("latitude")
+    expect(maxmind).not_to have_key("longitude")
+    expect(maxmind).not_to have_key("geoname_ids")
+  end
+
 end

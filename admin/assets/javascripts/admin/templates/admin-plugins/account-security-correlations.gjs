@@ -136,6 +136,29 @@ export default RouteTemplate(
       .as-correlation__diagnostic .as-correlation__value {
         font-variant-numeric: tabular-nums;
       }
+      .as-correlation__infrastructure-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: .7rem;
+        margin-top: .75rem;
+      }
+      .as-correlation__infrastructure-card {
+        min-width: 0;
+        padding: .75rem .85rem;
+        border: 1px solid var(--as-border);
+        border-radius: 12px;
+        background: var(--secondary);
+      }
+      .as-correlation__infrastructure-card .as-correlation__ip-address {
+        display: block;
+        margin-bottom: .3rem;
+      }
+      .as-correlation__context-lines {
+        display: grid;
+        gap: .2rem;
+        color: var(--as-muted);
+        font-size: var(--font-down-1);
+      }
       .as-correlation__schedule-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
         margin-top: .85rem;
@@ -542,6 +565,9 @@ export default RouteTemplate(
         background: var(--as-surface-alt);
         color: var(--as-muted);
       }
+      @media (max-width: 1050px) {
+        .as-correlation__infrastructure-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
       @media (max-width: 1150px) {
         .as-correlation__compact-grid,
         .as-correlation__diagnostics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -575,7 +601,8 @@ export default RouteTemplate(
         .as-correlation__investigation-summary { grid-template-columns: 1fr; }
         .as-correlation__group-summary,
         .as-correlation__candidate-summary-line { align-items: flex-start; }
-        .as-correlation__group-accounts { grid-template-columns: 1fr; }
+        .as-correlation__group-accounts,
+        .as-correlation__infrastructure-grid { grid-template-columns: 1fr; }
         .as-correlation__temporal-summary,
         .as-correlation__temporal-account-grid { grid-template-columns: 1fr; }
       }
@@ -663,6 +690,27 @@ export default RouteTemplate(
               {{/if}}
               {{#if @controller.data.scan.auth_log_truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.diagnostics_auth_truncated"}}</div>{{/if}}
               {{#if @controller.data.scan.truncated}}<div class="as-correlation__warning" style="margin-top: .7rem;">{{i18n "admin.account_security.correlations.scan_truncated"}}</div>{{/if}}
+              {{#if @controller.data.scan.large_shared_groups.length}}
+                <div class="as-correlation__subpanel" style="margin-top: .8rem; background: var(--secondary);">
+                  <h4>{{i18n "admin.account_security.correlations.high_sharing_title"}}</h4>
+                  <p class="as-correlation__muted" style="margin-top: .25rem;">{{i18n "admin.account_security.correlations.high_sharing_description"}}</p>
+                  <div class="as-correlation__infrastructure-grid">
+                    {{#each @controller.data.scan.large_shared_groups as |group|}}
+                      <div class="as-correlation__infrastructure-card">
+                        <span class="as-correlation__ip-address">{{group.ip_address}}</span>
+                        <div class="as-correlation__value">{{group.account_count_label}}</div>
+                        <div class="as-correlation__context-lines" style="margin-top: .35rem;">
+                          <span>{{group.context_display}}</span>
+                          {{#if group.network_context.network_display}}<span><strong>{{i18n "admin.account_security.correlations.network_asn"}}:</strong> {{group.network_context.network_display}}</span>{{/if}}
+                          {{#if group.isp}}<span><strong>{{i18n "admin.account_security.correlations.cached_isp"}}:</strong> {{group.isp}}</span>{{/if}}
+                          {{#if group.usage_type}}<span><strong>{{i18n "admin.account_security.intelligence.usage_type"}}:</strong> {{group.usage_type}}</span>{{/if}}
+                          {{#if group.network_context.location_display}}<span><strong>{{i18n "admin.account_security.correlations.approximate_location"}}:</strong> {{group.network_context.location_display}}</span>{{/if}}
+                        </div>
+                      </div>
+                    {{/each}}
+                  </div>
+                </div>
+              {{/if}}
             {{else}}
               <div class="as-correlation__empty" style="margin-top: .75rem;">{{i18n "admin.account_security.no_data"}}</div>
             {{/if}}
@@ -724,6 +772,7 @@ export default RouteTemplate(
                       {{#if group.tor}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_tor"}}</span>{{/if}}
                       {{#if group.hosting}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_hosting"}}</span>{{/if}}
                       {{#if group.mobile}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_mobile"}}</span>{{/if}}
+                      {{#if group.local_blacklist}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_blacklist"}}</span>{{/if}}
                       {{#if group.trusted}}<span class="as-correlation__badge">{{i18n "admin.account_security.correlations.context_trusted"}}</span>{{/if}}
                     </div>
                     <span class="as-correlation__disclosure-icon" aria-hidden="true">{{dIcon "chevron-right"}}</span>
@@ -734,6 +783,10 @@ export default RouteTemplate(
                       <span>{{i18n "admin.account_security.correlations.group_auth_accounts" count=group.auth_account_count}}</span>
                       {{#if group.temporal_aligned_pair_count}}<span>{{i18n "admin.account_security.correlations.group_temporal_pairs" count=group.temporal_aligned_pair_count}}</span>{{/if}}
                       <span>{{i18n "admin.account_security.correlations.ip_context"}}: {{group.context_display}}</span>
+                      {{#if group.network_context.network_display}}<span>{{i18n "admin.account_security.correlations.network_asn"}}: {{group.network_context.network_display}}</span>{{/if}}
+                      {{#if group.isp}}<span>{{i18n "admin.account_security.correlations.cached_isp"}}: {{group.isp}}</span>{{/if}}
+                      {{#if group.usage_type}}<span>{{i18n "admin.account_security.intelligence.usage_type"}}: {{group.usage_type}}</span>{{/if}}
+                      {{#if group.network_context.location_display}}<span>{{i18n "admin.account_security.correlations.approximate_location"}}: {{group.network_context.location_display}}</span>{{/if}}
                     </div>
                     <div class="as-correlation__group-accounts">
                       {{#each group.accounts as |account|}}

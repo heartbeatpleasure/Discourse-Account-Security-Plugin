@@ -39,6 +39,26 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     return i18n(`admin.account_security.correlations.ip_sources.${key}`);
   }
 
+  decorateNetworkContext(context) {
+    const value = context || {};
+    const maxmind = value.maxmind || {};
+    const asn = Number(maxmind.asn || 0);
+    const asnDisplay = asn > 0 ? `AS${asn}` : null;
+    const networkDisplay = [asnDisplay, maxmind.organization]
+      .filter(Boolean)
+      .join(" · ");
+    const locationDisplay = maxmind.location || null;
+
+    return {
+      ...value,
+      maxmind,
+      asn_display: asnDisplay,
+      network_display: networkDisplay || null,
+      location_display: locationDisplay,
+      has_local_context: Boolean(networkDisplay || locationDisplay),
+    };
+  }
+
   sharedExactIpLabel(count) {
     const value = Number(count || 0);
     const key = value === 1 ? "shared_exact_ip_one" : "shared_exact_ip_other";
@@ -47,6 +67,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
 
   decorateIpDetail(detail, userA, userB) {
     const contexts = [];
+    const networkContext = this.decorateNetworkContext(detail.network_context);
     if (!detail.public) {
       contexts.push(i18n("admin.account_security.correlations.context_nonpublic"));
     }
@@ -71,6 +92,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
 
     return {
       ...detail,
+      network_context: networkContext,
       sources_a_display: (detail.sources_a || [])
         .map((source) => this.sourceLabel(source))
         .join(", "),
@@ -85,7 +107,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         detail.trusted ||
         detail.tor ||
         detail.hosting ||
-        detail.mobile,
+        detail.mobile ||
+        networkContext.country_mismatch === true,
       seen_by_display: i18n("admin.account_security.correlations.ip_seen_by", {
         count: Number(detail.user_count || 0),
       }),
@@ -231,6 +254,8 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       );
     }
 
+    const networkSummary = evidence.network_context_summary || {};
+
     return {
       ...item,
       user_a: userA,
@@ -264,6 +289,16 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
         evidence.closest_shared_ip_gap_seconds
       ),
       has_temporal_evidence: Number(evidence.timed_shared_ip_count || 0) > 0,
+      network_context_summary: {
+        ...networkSummary,
+        organizations_display: (networkSummary.organizations || []).join(", "),
+        countries_display: (networkSummary.country_codes || []).join(", "),
+        asns_display: (networkSummary.asns || [])
+          .map((asn) => `AS${asn}`)
+          .join(", "),
+      },
+      has_network_context:
+        Number(networkSummary.locally_enriched_ip_count || 0) > 0,
       can_reopen: item.status !== "open",
     };
   }
@@ -299,6 +334,39 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       ? scan.source
       : "manual";
 
+    const largeSharedGroups = (diagnostics.large_ip_group_summaries || []).map(
+      (group) => {
+        const networkContext = this.decorateNetworkContext(group.network_context);
+        const contexts = [];
+        if (!group.public) {
+          contexts.push(i18n("admin.account_security.correlations.context_nonpublic"));
+        }
+        if (group.trusted) {
+          contexts.push(i18n("admin.account_security.correlations.context_trusted"));
+        }
+        if (group.tor) {
+          contexts.push(i18n("admin.account_security.correlations.context_tor"));
+        }
+        if (group.hosting) {
+          contexts.push(i18n("admin.account_security.correlations.context_hosting"));
+        }
+        if (group.mobile) {
+          contexts.push(i18n("admin.account_security.correlations.context_mobile"));
+        }
+        return {
+          ...group,
+          network_context: networkContext,
+          context_display:
+            contexts.join(" · ") ||
+            i18n("admin.account_security.correlations.context_standard"),
+          account_count_label: i18n(
+            "admin.account_security.correlations.group_account_count",
+            { count: Number(group.user_count || 0) }
+          ),
+        };
+      }
+    );
+
     return {
       ...scan,
       source_label: i18n(
@@ -308,6 +376,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       started_at_display: formatAccountSecurityDateTime(scan.started_at),
       completed_at_display: formatAccountSecurityDateTime(scan.completed_at),
       diagnostic_cards: diagnosticCards,
+      large_shared_groups: largeSharedGroups,
       auth_log_truncated:
         diagnostics.auth_log_truncated === true ||
         diagnostics.temporal_auth_log_truncated === true,
@@ -362,11 +431,15 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
             pair_ids: new Set(),
             max_score: 0,
             context_display: detail.context_display,
+            network_context: detail.network_context,
             public: detail.public === true,
             trusted: detail.trusted === true,
             tor: detail.tor === true,
             hosting: detail.hosting === true,
             mobile: detail.mobile === true,
+            local_blacklist: detail.local_blacklist === true,
+            usage_type: detail.usage_type || null,
+            isp: detail.isp || null,
           };
           groups.set(detail.ip_address, group);
         }

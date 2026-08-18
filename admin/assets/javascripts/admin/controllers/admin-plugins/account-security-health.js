@@ -4,6 +4,7 @@ import { tracked } from "@glimmer/tracking";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { i18n } from "discourse-i18n";
+import { formatAccountSecurityDateTime } from "../../lib/account-security-date";
 
 const REASON_KEYS = {
   plugin_disabled: "plugin_disabled",
@@ -45,6 +46,23 @@ export default class AdminPluginsAccountSecurityHealthController extends Control
     const value = this.data?.configuration?.correlation_auto_scan_frequency;
     const key = allowed.includes(value) ? value : "monthly";
     return i18n(`admin.account_security.correlations.frequencies.${key}`);
+  }
+
+  get localNetworkContext() {
+    const context = this.data?.local_network_context;
+    if (!context) {
+      return null;
+    }
+
+    const allowed = ["available", "partial", "unavailable", "unknown"];
+    const state = allowed.includes(context.overall) ? context.overall : "unknown";
+    return {
+      ...context,
+      incomplete: context.city?.available !== true || context.asn?.available !== true,
+      state_label: i18n(`admin.account_security.health.maxmind_states.${state}`),
+      city_updated_at_display: formatAccountSecurityDateTime(context.city?.updated_at),
+      asn_updated_at_display: formatAccountSecurityDateTime(context.asn?.updated_at),
+    };
   }
 
   get overallReasonText() {

@@ -9,6 +9,7 @@ module ::AccountSecurity
     SOURCES = %w[registration current history auth_session active_session].freeze
     MAX_STORED_SHARED_IPS = 12
     MAX_AUTH_INDEX_ROWS = 100_000
+    MAX_LARGE_GROUP_SUMMARIES = 12
 
     class ScanIndex
       attr_reader :diagnostics
@@ -28,6 +29,7 @@ module ::AccountSecurity
           public_ip_groups: 0,
           nonpublic_ip_groups: 0,
           large_ip_groups_skipped: 0,
+          large_ip_group_summaries: [],
           exact_ip_pairs_generated: 0,
           auth_log_truncated: false,
         }
@@ -67,6 +69,7 @@ module ::AccountSecurity
 
           if count > max_group_users
             diagnostics[:large_ip_groups_skipped] += 1
+            record_large_group_summary(ip, count)
             next
           end
 
@@ -81,6 +84,30 @@ module ::AccountSecurity
 
         diagnostics[:exact_ip_pairs_generated] = pairs.length
         pairs
+      end
+
+
+      def record_large_group_summary(ip, count)
+        context = @context_cache[ip] ||= CoreIpEvidence.context_for(ip)
+        summary = {
+          "ip_address" => ip.to_s,
+          "user_count" => count.to_i,
+          "public" => context[:public] == true,
+          "trusted" => context[:trusted] == true,
+          "tor" => context[:tor] == true,
+          "local_blacklist" => context[:local_blacklist] == true,
+          "usage_type" => context[:usage_type].to_s.presence,
+          "isp" => context[:isp].to_s.presence,
+          "hosting" => context[:hosting] == true,
+          "mobile" => context[:mobile] == true,
+        }.compact
+
+        rows = diagnostics[:large_ip_group_summaries]
+        rows << summary
+        rows.sort_by! { |row| [-row["user_count"].to_i, row["ip_address"].to_s] }
+        rows.slice!(MAX_LARGE_GROUP_SUMMARIES, rows.length) if rows.length > MAX_LARGE_GROUP_SUMMARIES
+      rescue StandardError => e
+        Rails.logger.warn("[account_security] large shared IP context summary failed class=#{e.class}")
       end
 
       def shared_details(user_a_id, user_b_id)

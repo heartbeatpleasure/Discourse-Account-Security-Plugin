@@ -39,6 +39,7 @@ module ::AccountSecurity
           tor: serialize_feed(tor, 2.hours),
           abuseipdb_blacklist: serialize_feed(blacklist, 8.hours),
         },
+        local_network_context: NetworkContext.database_status,
         counts: {
           cached_addresses: safe_count(IpIntelligence),
           open_events: safe_count(RiskEvent.where(status: "open")),
@@ -58,6 +59,8 @@ module ::AccountSecurity
           session_user_agent_correlation_uses_site_local_hmac: true,
           browser_continuity_raw_token_persisted: false,
           browser_continuity_is_positive_only_evidence: true,
+          maxmind_context_uses_local_discourse_databases: true,
+          maxmind_coordinates_persisted_by_account_security: false,
           automatic_abuse_reporting: false,
         },
       }

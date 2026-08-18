@@ -195,6 +195,24 @@ export default RouteTemplate(
           <div class="as-page__metric"><div class="as-page__label">{{i18n "admin.account_security.intelligence.evidence"}}</div><div class="as-page__value">{{if @controller.data.intelligence @controller.data.intelligence.evidence_strength "—"}}</div></div>
         </section>
 
+        {{#if @controller.data.network_context.maxmind.source}}
+          <section class="as-page__panel">
+            <div class="as-page__section-title">
+              <h2>{{i18n "admin.account_security.intelligence.local_network_context"}}</h2>
+              <p class="as-page__muted">{{i18n "admin.account_security.intelligence.local_network_context_description"}}</p>
+            </div>
+            <div class="as-page__grid">
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.asn"}}</div><div class="as-page__value">{{#if @controller.data.network_context.maxmind.asn}}AS{{@controller.data.network_context.maxmind.asn}}{{else}}—{{/if}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.asn_organization"}}</div><div class="as-page__value">{{if @controller.data.network_context.maxmind.organization @controller.data.network_context.maxmind.organization "—"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.approximate_location"}}</div><div class="as-page__value">{{if @controller.data.network_context.maxmind.location @controller.data.network_context.maxmind.location "—"}}</div></div>
+              <div class="as-page__item"><div class="as-page__label">{{i18n "admin.account_security.intelligence.maxmind_country"}}</div><div class="as-page__value">{{if @controller.data.network_context.maxmind.country_code @controller.data.network_context.maxmind.country_code "—"}}</div></div>
+            </div>
+            {{#if @controller.data.network_context.country_mismatch}}<div class="as-page__warning" style="margin-top: .75rem;">{{i18n "admin.account_security.intelligence.country_mismatch"}}</div>{{/if}}
+          </section>
+        {{else if @controller.data.network_context.public}}
+          <div class="as-page__notice">{{i18n "admin.account_security.intelligence.local_context_unavailable"}}</div>
+        {{/if}}
+
         {{#if @controller.data.intelligence}}
           <section class="as-page__panel">
             <div class="as-page__section-title"><h2>{{i18n "admin.account_security.intelligence.context"}}</h2></div>

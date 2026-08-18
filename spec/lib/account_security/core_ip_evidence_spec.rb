@@ -43,4 +43,32 @@ RSpec.describe AccountSecurity::CoreIpEvidence do
     expect(detail["sources_a"]).to eq(%w[history registration])
     expect(detail["sources_b"]).to eq(%w[current history])
   end
+
+  it "keeps high-sharing IP groups visible in scan diagnostics without generating pairs" do
+    index = described_class::ScanIndex.new
+    allow(described_class).to receive(:context_for).with("8.8.8.8").and_return(
+      public: true,
+      trusted: false,
+      tor: false,
+      local_blacklist: false,
+      usage_type: "Data Center/Web Hosting/Transit",
+      isp: "Example Infrastructure",
+      hosting: true,
+      mobile: false,
+    )
+
+    21.times { |offset| index.add(offset + 1, "8.8.8.8", "history") }
+
+    pairs = index.pair_set(max_group_users: 20, max_pairs: 20_000)
+    summary = index.diagnostics[:large_ip_group_summaries].first
+
+    expect(pairs).to be_empty
+    expect(index.diagnostics[:large_ip_groups_skipped]).to eq(1)
+    expect(summary).to include(
+      "ip_address" => "8.8.8.8",
+      "user_count" => 21,
+      "hosting" => true,
+      "isp" => "Example Infrastructure",
+    )
+  end
 end

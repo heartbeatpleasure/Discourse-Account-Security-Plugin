@@ -72,6 +72,11 @@ export default RouteTemplate(
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: .75rem;
       }
+      .as-page__local-context-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: .75rem;
+      }
       .as-page__item, .as-page__metric {
         min-width: 0;
         padding: .8rem .9rem;
@@ -135,7 +140,7 @@ export default RouteTemplate(
       }
       @media (max-width: 700px) {
         .as-page__panel-header { flex-direction: column; }
-        .as-page__metrics, .as-page__feed-summary { grid-template-columns: 1fr; }
+        .as-page__metrics, .as-page__feed-summary, .as-page__local-context-grid { grid-template-columns: 1fr; }
         .as-page__actions { width: 100%; justify-content: flex-start; }
       }
     </style>
@@ -215,6 +220,34 @@ export default RouteTemplate(
             </div>
           </div>
         </section>
+
+        {{#if @controller.localNetworkContext}}
+          <section class="as-page__panel">
+            <div class="as-page__section-title">
+              <h2>{{i18n "admin.account_security.health.local_network_context"}}</h2>
+              <p class="as-page__muted">{{i18n "admin.account_security.health.local_network_context_description"}}</p>
+            </div>
+            <div class="as-page__local-context-grid">
+              <div class="as-page__item">
+                <div class="as-page__label">{{i18n "admin.account_security.health.maxmind_status"}}</div>
+                <div class="as-page__value">{{@controller.localNetworkContext.state_label}}</div>
+              </div>
+              <div class="as-page__item">
+                <div class="as-page__label">GeoLite2 City</div>
+                <div class="as-page__value">{{if @controller.localNetworkContext.city.available (i18n "admin.account_security.health.maxmind_available") (i18n "admin.account_security.health.maxmind_unavailable")}}</div>
+                {{#if @controller.localNetworkContext.city_updated_at_display}}<div class="as-page__muted" style="margin-top: .25rem;">{{i18n "admin.account_security.health.maxmind_updated"}}: {{@controller.localNetworkContext.city_updated_at_display}}</div>{{/if}}
+              </div>
+              <div class="as-page__item">
+                <div class="as-page__label">GeoLite2 ASN</div>
+                <div class="as-page__value">{{if @controller.localNetworkContext.asn.available (i18n "admin.account_security.health.maxmind_available") (i18n "admin.account_security.health.maxmind_unavailable")}}</div>
+                {{#if @controller.localNetworkContext.asn_updated_at_display}}<div class="as-page__muted" style="margin-top: .25rem;">{{i18n "admin.account_security.health.maxmind_updated"}}: {{@controller.localNetworkContext.asn_updated_at_display}}</div>{{/if}}
+              </div>
+            </div>
+            {{#if @controller.localNetworkContext.incomplete}}
+              <p class="as-page__hint" style="margin-top: .65rem;">{{i18n "admin.account_security.health.maxmind_not_available"}}</p>
+            {{/if}}
+          </section>
+        {{/if}}
 
         <section class="as-page__panel">
           <div class="as-page__panel-header">
