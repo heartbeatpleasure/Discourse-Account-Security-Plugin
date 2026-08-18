@@ -141,6 +141,8 @@ module ::AccountSecurity
           client_count: precomputed_supplemental["shared_session_client_signature_count"].to_i,
           repeated_count: precomputed_supplemental["repeated_shared_session_signature_count"].to_i,
           repeated_client_count: precomputed_supplemental["repeated_shared_session_client_signature_count"].to_i,
+          max_client_users: precomputed_supplemental["max_shared_session_client_signature_users"].to_i,
+          client_population_complete: precomputed_supplemental["session_client_signature_population_complete"] == true,
           paired_observations: precomputed_supplemental["shared_session_signature_paired_observations"].to_i,
           span_days: precomputed_supplemental["shared_session_signature_span_days"].to_i,
         }
@@ -179,6 +181,14 @@ module ::AccountSecurity
         )
       end
 
+      # Temporal and authentication-pattern evidence is generated independently
+      # from the scoring policy. Under scoring v3 selected positive signals are
+      # now weighted, while missing/incomplete evidence remains non-negative.
+      temporal = temporal.merge(
+        "temporal_score_effect" => "weighted_v3",
+        "auth_pattern_score_effect" => "weighted_v3",
+      )
+
       registration_details = exact_details.select { |detail| both_source?(detail, "registration") }
       current_details = exact_details.select { |detail| both_source?(detail, "current") }
       history_details = exact_details.select { |detail| historical_source?(detail) }
@@ -212,6 +222,23 @@ module ::AccountSecurity
       repeated_session_client_signature_count = signature[:repeated_client_count].to_i
       repeated_auth_client_signature_count = temporal["repeated_shared_auth_client_signature_count"].to_i
       client_signature_source_count = [session_client_signature_count, auth_client_signature_count].count(&:positive?)
+      session_client_signature_users = signature[:max_client_users].to_i
+      auth_client_signature_users = temporal["max_shared_auth_client_signature_users"].to_i
+      client_signature_group_users = [session_client_signature_users, auth_client_signature_users].max
+      client_signature_population_complete =
+        if session_client_signature_count.positive? && auth_client_signature_count.positive?
+          signature[:client_population_complete] == true && temporal["auth_client_signature_population_complete"] == true
+        elsif session_client_signature_count.positive?
+          signature[:client_population_complete] == true
+        elsif auth_client_signature_count.positive?
+          temporal["auth_client_signature_population_complete"] == true
+        else
+          false
+        end
+      client_signature_group_paired_observations = [
+        signature[:paired_observations].to_i,
+        temporal["shared_auth_client_signature_paired_observations"].to_i,
+      ].max
 
       {
         "scoring_version" => AccountCorrelationPolicy::SCORING_VERSION,
@@ -250,9 +277,14 @@ module ::AccountSecurity
         "shared_session_client_signature_count" => session_client_signature_count,
         "repeated_shared_session_signature_count" => signature[:repeated_count].to_i,
         "repeated_shared_session_client_signature_count" => repeated_session_client_signature_count,
+        "max_shared_session_client_signature_users" => session_client_signature_users,
+        "session_client_signature_population_complete" => signature[:client_population_complete] == true,
         "client_signature_group_count" => [session_client_signature_count, auth_client_signature_count].max,
         "repeated_client_signature_group_count" => [repeated_session_client_signature_count, repeated_auth_client_signature_count].max,
         "client_signature_evidence_source_count" => client_signature_source_count,
+        "max_client_signature_group_users" => client_signature_group_users,
+        "client_signature_population_complete" => client_signature_population_complete,
+        "client_signature_group_paired_observations" => client_signature_group_paired_observations,
         "shared_session_signature_paired_observations" => signature[:paired_observations].to_i,
         "shared_session_signature_span_days" => signature[:span_days].to_i,
         "browser_continuity_count" => browser[:count].to_i,
@@ -348,7 +380,16 @@ module ::AccountSecurity
     end
 
     def shared_session_signature_summary(user_a_id, user_b_id, allowed_networks)
-      empty = { count: 0, client_count: 0, repeated_count: 0, repeated_client_count: 0, paired_observations: 0, span_days: 0 }
+      empty = {
+        count: 0,
+        client_count: 0,
+        repeated_count: 0,
+        repeated_client_count: 0,
+        max_client_users: 0,
+        client_population_complete: false,
+        paired_observations: 0,
+        span_days: 0,
+      }
       return empty if allowed_networks.blank?
 
       cutoff = SessionSignatureRecorder.retention_cutoff
@@ -391,16 +432,26 @@ module ::AccountSecurity
         end
       end
 
+      shared_client_signatures = shared.map { |_network, signature| signature.to_s }.uniq
+      client_user_counts = SessionSignature
+        .where(signature_hash: shared_client_signatures)
+        .where("last_seen_at >= ?", cutoff)
+        .group(:signature_hash)
+        .distinct
+        .count(:user_id)
+
       {
         count: shared.length,
-        client_count: shared.map { |network, signature| signature.to_s }.uniq.length,
+        client_count: shared_client_signatures.length,
         repeated_count: repeated_count,
         repeated_client_count: repeated_client_signatures.length,
+        max_client_users: client_user_counts.values.max.to_i,
+        client_population_complete: true,
         paired_observations: paired_observations,
         span_days: (max_span_seconds.to_f / 1.day.to_i).floor,
       }
     rescue ActiveRecord::StatementInvalid
-      empty || { count: 0, client_count: 0, repeated_count: 0, repeated_client_count: 0, paired_observations: 0, span_days: 0 }
+      empty
     end
 
     def distinct_users_on_network(network)

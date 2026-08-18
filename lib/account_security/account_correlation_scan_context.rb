@@ -13,7 +13,9 @@ module ::AccountSecurity
       @network_users = Hash.new { |hash, network| hash[network] = Set.new }
       @signatures_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
       @signature_users = Hash.new { |hash, key| hash[key] = Set.new }
+      @client_signature_users = Hash.new { |hash, signature| hash[signature] = Set.new }
       @signature_meta_by_user = Hash.new { |hash, user_id| hash[user_id] = {} }
+      @session_signature_population_complete = true
       @browser_tokens_by_user = Hash.new { |hash, user_id| hash[user_id] = Set.new }
       @browser_token_users = Hash.new { |hash, token| hash[token] = Set.new }
       @browser_meta_by_user = Hash.new { |hash, user_id| hash[user_id] = {} }
@@ -66,6 +68,9 @@ module ::AccountSecurity
         @signature_meta_by_user[user_b_id],
       )
       shared_client_signatures = shared_signature_keys.map { |_network, signature| signature }.uniq
+      max_shared_client_signature_users = shared_client_signatures.map do |signature|
+        @client_signature_users[signature].length
+      end.max.to_i
       repeated_shared_client_signatures = shared_signature_keys.filter_map do |key|
         row_a = @signature_meta_by_user[user_a_id][key] || {}
         row_b = @signature_meta_by_user[user_b_id][key] || {}
@@ -88,6 +93,8 @@ module ::AccountSecurity
         "shared_session_client_signature_count" => shared_client_signatures.length,
         "repeated_shared_session_signature_count" => signature_summary[:repeated_count],
         "repeated_shared_session_client_signature_count" => repeated_shared_client_signatures.length,
+        "max_shared_session_client_signature_users" => max_shared_client_signature_users,
+        "session_client_signature_population_complete" => @session_signature_population_complete,
         "shared_session_signature_paired_observations" => signature_summary[:paired_observations],
         "shared_session_signature_span_days" => signature_summary[:max_span_days],
         "browser_continuity_count" => shared_browser_tokens.length,
@@ -133,6 +140,7 @@ module ::AccountSecurity
           before = @signatures_by_user[user_id].length
           @signatures_by_user[user_id] << key
           @signature_users[key] << user_id
+          @client_signature_users[signature] << user_id
           @signature_meta_by_user[user_id][key] = {
             first_seen_at: first_seen_at,
             last_seen_at: last_seen_at,
@@ -141,6 +149,7 @@ module ::AccountSecurity
           diagnostics[:supplemental_signature_relations] += 1 if @signatures_by_user[user_id].length > before
         end
     rescue ActiveRecord::StatementInvalid => e
+      @session_signature_population_complete = false
       Rails.logger.warn("[account_security] correlation scan signature preload failed class=#{e.class}")
     end
 

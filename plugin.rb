@@ -2,7 +2,7 @@
 
 # name: Discourse-Account-Security-Plugin
 # about: Adds provider-neutral account security intelligence and abuse-risk monitoring to Discourse.
-# version: 0.18.0
+# version: 0.19.0
 # authors: Chris
 
 add_admin_route "admin.account_security.title", "accountSecurity"
@@ -10,7 +10,7 @@ enabled_site_setting :account_security_enabled
 
 module ::AccountSecurity
   PLUGIN_NAME = "Discourse-Account-Security-Plugin"
-  PLUGIN_VERSION = "0.18.0"
+  PLUGIN_VERSION = "0.19.0"
   STORE_NAMESPACE = "account_security"
 end
 
@@ -233,6 +233,8 @@ after_initialize do
     post "/admin/plugins/account-security/lookup.json" => "account_security/admin#lookup",
          defaults: { format: :json }, constraints: AdminConstraint.new
     get "/admin/plugins/account-security/correlations.json" => "account_security/admin#correlations",
+        defaults: { format: :json }, constraints: AdminConstraint.new
+    get "/admin/plugins/account-security/correlations/scan-status.json" => "account_security/admin#correlation_scan_status",
         defaults: { format: :json }, constraints: AdminConstraint.new
     put "/admin/plugins/account-security/correlations/:id.json" => "account_security/admin#update_correlation",
         defaults: { format: :json }, constraints: AdminConstraint.new

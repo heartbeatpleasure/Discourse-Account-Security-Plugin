@@ -244,6 +244,10 @@ module ::AccountSecurity
     end
 
 
+    def correlation_scan_status
+      render_json_dump(scan: serialize_correlation_scan_poll(AccountCorrelationScanner.status))
+    end
+
     def update_correlation
       rate_limit!("correlation-update", 20)
       correlation = find_correlation!
@@ -680,9 +684,14 @@ module ::AccountSecurity
           shared_session_client_signature_count: evidence["shared_session_client_signature_count"].to_i,
           repeated_shared_session_signature_count: evidence["repeated_shared_session_signature_count"].to_i,
           repeated_shared_session_client_signature_count: evidence["repeated_shared_session_client_signature_count"].to_i,
+          max_shared_session_client_signature_users: nonnegative_integer_or_nil(evidence["max_shared_session_client_signature_users"]),
+          session_client_signature_population_complete: evidence["session_client_signature_population_complete"] == true,
           client_signature_group_count: evidence["client_signature_group_count"].to_i,
           repeated_client_signature_group_count: evidence["repeated_client_signature_group_count"].to_i,
           client_signature_evidence_source_count: evidence["client_signature_evidence_source_count"].to_i.clamp(0, 2),
+          max_client_signature_group_users: nonnegative_integer_or_nil(evidence["max_client_signature_group_users"]),
+          client_signature_population_complete: evidence["client_signature_population_complete"] == true,
+          client_signature_group_paired_observations: evidence["client_signature_group_paired_observations"].to_i,
           shared_session_signature_paired_observations: evidence["shared_session_signature_paired_observations"].to_i,
           shared_session_signature_span_days: evidence["shared_session_signature_span_days"].to_i,
           browser_continuity_count: evidence["browser_continuity_count"].to_i,
@@ -716,7 +725,7 @@ module ::AccountSecurity
           max_temporal_ip_users_30d: nonnegative_integer_or_nil(evidence["max_temporal_ip_users_30d"]),
           temporal_ip_details: serialize_temporal_ip_details(evidence["temporal_ip_details"]),
           temporal_ip_details_truncated: evidence["temporal_ip_details_truncated"] == true,
-          temporal_score_effect: evidence["temporal_score_effect"] == "none" ? "none" : nil,
+          temporal_score_effect: %w[none weighted_v3].include?(evidence["temporal_score_effect"]) ? evidence["temporal_score_effect"] : nil,
           auth_pattern_evidence_version: evidence["auth_pattern_evidence_version"].to_i,
           auth_pattern_history_complete: evidence["auth_pattern_history_complete"] == true,
           auth_proximity_closest_gap_seconds: nonnegative_integer_or_nil(evidence["auth_proximity_closest_gap_seconds"]),
@@ -757,7 +766,7 @@ module ::AccountSecurity
           max_public_ip_transition_users_7d: nonnegative_integer_or_nil(evidence["max_public_ip_transition_users_7d"]),
           public_ip_transition_details: serialize_public_ip_transition_details(evidence["public_ip_transition_details"]),
           public_ip_transition_details_truncated: evidence["public_ip_transition_details_truncated"] == true,
-          auth_pattern_score_effect: evidence["auth_pattern_score_effect"] == "none" ? "none" : nil,
+          auth_pattern_score_effect: %w[none weighted_v3].include?(evidence["auth_pattern_score_effect"]) ? evidence["auth_pattern_score_effect"] : nil,
           raw_user_agent_stored: false,
         },
       }
@@ -815,6 +824,20 @@ module ::AccountSecurity
           },
         }
       end
+    end
+
+    def serialize_correlation_scan_poll(scan)
+      return scan unless scan.is_a?(Hash)
+
+      diagnostics = scan[:diagnostics] || scan["diagnostics"]
+      return scan unless diagnostics.is_a?(Hash)
+
+      # Polling happens while a potentially large scan is active. Keep this
+      # endpoint intentionally lightweight: counters and coverage diagnostics
+      # are useful live, while expensive/enriched shared-IP summaries are
+      # loaded once from the normal correlations endpoint after completion.
+      trimmed = diagnostics.except(:large_ip_group_summaries, "large_ip_group_summaries")
+      scan.merge(diagnostics: trimmed)
     end
 
     def serialize_correlation_scan(scan)

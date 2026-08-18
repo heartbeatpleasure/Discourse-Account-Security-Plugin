@@ -51,6 +51,8 @@ RSpec.describe AccountSecurity::AccountCorrelationScanContext do
     expect(evidence["shared_session_client_signature_count"]).to eq(1)
     expect(evidence["repeated_shared_session_signature_count"]).to eq(1)
     expect(evidence["repeated_shared_session_client_signature_count"]).to eq(1)
+    expect(evidence["max_shared_session_client_signature_users"]).to eq(2)
+    expect(evidence["session_client_signature_population_complete"]).to eq(true)
     expect(evidence["shared_session_signature_paired_observations"]).to eq(3)
     expect(evidence["browser_continuity_count"]).to eq(1)
     expect(evidence["repeated_browser_continuity_count"]).to eq(1)
@@ -77,6 +79,8 @@ RSpec.describe AccountSecurity::AccountCorrelationScanContext do
     expect(evidence["shared_session_client_signature_count"]).to eq(1)
     expect(evidence["repeated_shared_session_signature_count"]).to eq(2)
     expect(evidence["repeated_shared_session_client_signature_count"]).to eq(1)
+    expect(evidence["max_shared_session_client_signature_users"]).to eq(2)
+    expect(evidence["session_client_signature_population_complete"]).to eq(true)
   end
 
 end

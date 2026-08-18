@@ -45,7 +45,7 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation.score).to be < SiteSetting.account_security_correlation_min_score
   end
 
-  it "keeps exact private registration-IP overlap visible and gives close registrations meaningful weight" do
+  it "keeps exact private registration-IP overlap visible without treating private addresses as identity weight" do
     user_a.update_columns(registration_ip_address: "10.0.0.50", ip_address: "10.0.0.50", created_at: 1.hour.ago)
     user_b.update_columns(registration_ip_address: "10.0.0.50", ip_address: "10.0.0.50", created_at: Time.zone.now)
 
@@ -54,11 +54,11 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(correlation).to be_present
     expect(correlation.evidence["shared_registration_ip_nonpublic"]).to eq(true)
     expect(correlation.evidence["same_current_ip_nonpublic"]).to eq(true)
-    expect(correlation.score).to be >= 40
-    expect(correlation.confidence).to eq("moderate")
+    expect(correlation.score).to eq(0)
+    expect(correlation.confidence).to eq("weak")
   end
 
-  it "combines repeated shared networks with a hashed session signature" do
+  it "combines repeated shared networks with a hashed client signature without double-counting the same client" do
     now = Time.zone.now
     %w[8.8.8.8/32 1.1.1.1/32].each do |network|
       [user_a, user_b].each do |user|
@@ -81,14 +81,17 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
       end
     end
 
-    correlation = described_class.recalculate_pair!(user_a.id, user_b.id, source: "spec")
+    evidence = described_class.build_evidence(user_a, user_b)
 
-    expect(correlation).to be_present
-    expect(correlation.evidence["shared_network_count"]).to eq(2)
-    expect(correlation.evidence["shared_session_signature_count"]).to eq(2)
-    expect(correlation.evidence["shared_session_client_signature_count"]).to eq(1)
-    expect(correlation.evidence["client_signature_group_count"]).to eq(1)
-    expect(correlation.evidence["client_signature_evidence_source_count"]).to eq(1)
+    expect(evidence["shared_network_count"]).to eq(2)
+    expect(evidence["shared_session_signature_count"]).to eq(2)
+    expect(evidence["shared_session_client_signature_count"]).to eq(1)
+    expect(evidence["client_signature_group_count"]).to eq(1)
+    expect(evidence["client_signature_evidence_source_count"]).to eq(1)
+    expect(evidence["max_shared_session_client_signature_users"]).to eq(2)
+    expect(evidence["max_client_signature_group_users"]).to eq(2)
+    expect(evidence["session_client_signature_population_complete"]).to eq(true)
+    expect(evidence["client_signature_population_complete"]).to eq(true)
   end
   it "stores aggregate temporal evidence without copying source timestamps into correlation evidence" do
     base = 1.day.ago.change(usec: 0)
@@ -215,9 +218,15 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
         "shared_session_client_signature_count" => 2,
         "repeated_shared_session_signature_count" => 1,
         "repeated_shared_session_client_signature_count" => 1,
+        "max_shared_session_client_signature_users" => 2,
+        "session_client_signature_population_complete" => true,
+        "shared_session_signature_paired_observations" => 4,
         "temporal_evidence" => temporal.merge(
           "shared_auth_client_signature_count" => 3,
           "repeated_shared_auth_client_signature_count" => 2,
+          "shared_auth_client_signature_paired_observations" => 6,
+          "max_shared_auth_client_signature_users" => 3,
+          "auth_client_signature_population_complete" => true,
         ),
       },
     )
@@ -225,6 +234,11 @@ RSpec.describe AccountSecurity::AccountCorrelationService do
     expect(evidence["client_signature_group_count"]).to eq(3)
     expect(evidence["repeated_client_signature_group_count"]).to eq(2)
     expect(evidence["client_signature_evidence_source_count"]).to eq(2)
+    expect(evidence["max_client_signature_group_users"]).to eq(3)
+    expect(evidence["client_signature_population_complete"]).to eq(true)
+    expect(evidence["client_signature_group_paired_observations"]).to eq(6)
+    expect(evidence["temporal_score_effect"]).to eq("weighted_v3")
+    expect(evidence["auth_pattern_score_effect"]).to eq("weighted_v3")
     expect(evidence["temporal_ip_population_complete"]).to eq(true)
     expect(evidence["temporal_within_6h_count"]).to eq(2)
     expect(evidence["temporal_within_72h_count"]).to eq(3)

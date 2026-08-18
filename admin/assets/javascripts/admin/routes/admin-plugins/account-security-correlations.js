@@ -11,4 +11,11 @@ export default class AdminPluginsAccountSecurityCorrelationsRoute extends Discou
     controller.resetState?.();
     controller.loadCorrelations?.();
   }
+
+  resetController(controller, isExiting) {
+    if (isExiting) {
+      controller.deactivateScanPolling?.();
+    }
+    super.resetController(...arguments);
+  }
 }

@@ -340,9 +340,9 @@ export default class AccountSecurityCorrelationPair extends Component {
             <div class="as-correlation__continuity-note">{{i18n "admin.account_security.correlations.auth_patterns_history_incomplete"}}</div>
           {{/if}}
 
-          {{#if @item.evidence.auth_client_signature_population_complete}}
-            {{#if @item.evidence.max_shared_auth_client_signature_users}}
-              <p class="as-correlation__muted" style="margin-top: .65rem;">{{i18n "admin.account_security.correlations.auth_patterns_signature_seen_by" count=@item.evidence.max_shared_auth_client_signature_users}}</p>
+          {{#if @item.evidence.client_signature_population_complete}}
+            {{#if @item.evidence.max_client_signature_group_users}}
+              <p class="as-correlation__muted" style="margin-top: .65rem;">{{i18n "admin.account_security.correlations.auth_patterns_signature_seen_by" count=@item.evidence.max_client_signature_group_users}}</p>
             {{/if}}
           {{/if}}
 

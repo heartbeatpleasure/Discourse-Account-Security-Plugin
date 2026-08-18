@@ -7,282 +7,371 @@ RSpec.describe AccountSecurity::AccountCorrelationPolicy do
     SiteSetting.account_security_correlation_min_score = 40
   end
 
-  it "treats one clean public IP with authentication evidence as moderate rather than weak" do
-    evidence = {
-      "shared_exact_ip_count" => 1,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-        },
-      ],
+  def public_ip(ip:, users: 2, sources_a: ["auth_session"], sources_b: ["auth_session"], **context)
+    {
+      "ip_address" => ip,
+      "public" => true,
+      "trusted" => false,
+      "user_count" => users,
+      "sources_a" => sources_a,
+      "sources_b" => sources_b,
+    }.merge(context.transform_keys(&:to_s))
+  end
+
+  def exact_ip_evidence(*details)
+    {
+      "shared_exact_ip_count" => details.length,
+      "shared_public_ip_count" => details.length,
+      "untrusted_public_ip_count" => details.count { |detail| detail["trusted"] != true },
+      "exact_ip_population_complete" => true,
+      "shared_ip_details" => details,
     }
+  end
+
+  it "uses scoring version 3" do
+    expect(described_class::SCORING_VERSION).to eq(3)
+  end
+
+  it "rates one rare clean public IP with authentication support as moderate" do
+    evidence = exact_ip_evidence(public_ip(ip: "8.8.8.8"))
 
     result = described_class.score_with_breakdown(evidence)
 
-    expect(result[:score]).to eq(38)
+    expect(result[:score]).to eq(26)
+    expect(result[:breakdown].map { |entry| entry["key"] }).to eq(["v3_exact_public_ip"])
     expect(described_class.confidence(result[:score])).to eq("moderate")
     expect(described_class.store_candidate?(result[:score], evidence)).to eq(true)
   end
 
-  it "keeps a single non-public exact IP visible but low confidence" do
+  it "keeps exact non-public overlap visible without treating it as identity weight" do
     evidence = {
       "shared_exact_ip_count" => 1,
-      "shared_ip_details" => [
-        {
-          "public" => false,
-          "user_count" => 5,
-          "sources_a" => ["current"],
-          "sources_b" => ["current"],
-        },
-      ],
-    }
-
-    score = described_class.score(evidence)
-
-    expect(score).to eq(6)
-    expect(described_class.confidence(score)).to eq("weak")
-    expect(described_class.store_candidate?(score, evidence)).to eq(true)
-  end
-
-  it "rates a public shared IP plus registration authentication and nearby registration time as strong" do
-    evidence = {
-      "shared_exact_ip_count" => 2,
-      "registration_delta_minutes" => 2.days.to_i / 60,
-      "shared_ip_details" => [
-        {
-          "ip_address" => "84.106.2.103",
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session", "registration"],
-        },
-        {
-          "ip_address" => "10.0.3.1",
-          "public" => false,
-          "user_count" => 5,
-          "sources_a" => %w[current auth_session active_session],
-          "sources_b" => %w[current auth_session active_session],
-        },
-      ],
-    }
-
-    result = described_class.score_with_breakdown(evidence)
-
-    expect(result[:score]).to eq(60)
-    expect(described_class.confidence(result[:score])).to eq("strong")
-  end
-
-  it "makes multiple independent public IP matches very strong when sources corroborate them" do
-    evidence = {
-      "shared_exact_ip_count" => 2,
-      "registration_delta_minutes" => 30,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => %w[registration auth_session],
-          "sources_b" => %w[registration auth_session],
-        },
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => %w[history auth_session],
-          "sources_b" => %w[history auth_session],
-        },
-      ],
-    }
-
-    score = described_class.score(evidence)
-
-    expect(score).to be >= 75
-    expect(described_class.confidence(score)).to eq("very_strong")
-  end
-
-  it "applies shared-address popularity only to the public IP that is actually popular" do
-    evidence = {
-      "shared_exact_ip_count" => 2,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-        },
-        {
-          "public" => false,
-          "user_count" => 20,
-          "sources_a" => ["current"],
-          "sources_b" => ["current"],
-        },
-      ],
-    }
-
-    result = described_class.score_with_breakdown(evidence)
-    popularity = result[:breakdown].find { |entry| entry["key"] == "shared_ip_popularity" }
-
-    expect(result[:score]).to eq(44)
-    expect(popularity).to be_nil
-  end
-
-  it "reduces Tor public-IP weight without hiding the exact-IP pair" do
-    ordinary = {
-      "shared_exact_ip_count" => 1,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-        },
-      ],
-    }
-    tor = Marshal.load(Marshal.dump(ordinary))
-    tor["shared_ip_details"][0]["tor"] = true
-
-    expect(described_class.score(tor)).to be < described_class.score(ordinary)
-    expect(described_class.store_candidate?(described_class.score(tor), tor)).to eq(true)
-  end
-
-  it "uses browser continuity only as positive evidence and never penalizes its absence" do
-    base = {
-      "shared_exact_ip_count" => 1,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-        },
-      ],
-    }
-
-    without_continuity = described_class.score(base)
-    with_continuity = described_class.score(
-      base.merge("browser_continuity_count" => 1, "max_browser_continuity_users" => 2),
-    )
-
-    expect(with_continuity).to be > without_continuity
-    expect(described_class.score(base.merge("browser_continuity_count" => 0))).to eq(without_continuity)
-  end
-
-  it "never creates a candidate from browser continuity alone" do
-    browser_only = {
-      "browser_continuity_count" => 2,
-      "max_browser_continuity_users" => 2,
       "registration_delta_minutes" => 10,
-    }
-
-    score = described_class.score(browser_only)
-
-    expect(score).to be > 0
-    expect(described_class.store_candidate?(score, browser_only)).to eq(false)
-  end
-
-  it "keeps a public registration IP shared by five accounts moderate unless other evidence corroborates it" do
-    evidence = {
-      "shared_exact_ip_count" => 1,
       "shared_ip_details" => [
         {
-          "public" => true,
-          "user_count" => 5,
+          "ip_address" => "10.0.0.50",
+          "public" => false,
+          "user_count" => 2,
           "sources_a" => ["registration"],
           "sources_b" => ["registration"],
         },
       ],
     }
 
-    score = described_class.score(evidence)
-
-    expect(score).to eq(36)
-    expect(described_class.confidence(score)).to eq("moderate")
+    expect(described_class.score(evidence)).to eq(0)
+    expect(described_class.confidence(0)).to eq("weak")
+    expect(described_class.store_candidate?(0, evidence)).to eq(true)
   end
 
-  it "uses evidence-oriented confidence bands instead of treating scores in the thirties as weak" do
-    expect(described_class.confidence(24)).to eq("weak")
-    expect(described_class.confidence(25)).to eq("moderate")
-    expect(described_class.confidence(49)).to eq("moderate")
-    expect(described_class.confidence(50)).to eq("strong")
-    expect(described_class.confidence(74)).to eq("strong")
-    expect(described_class.confidence(75)).to eq("very_strong")
-  end
-  it "keeps temporal evidence out of the score until the scoring model is explicitly revisited" do
-    base = {
-      "shared_exact_ip_count" => 1,
-      "shared_ip_details" => [
-        {
-          "public" => true,
-          "user_count" => 2,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-        },
-      ],
-    }
-
-    with_temporal = base.merge(
-      "temporal_evidence_version" => 1,
-      "timed_shared_ip_count" => 1,
-      "temporal_within_15m_count" => 1,
-      "temporal_within_1h_count" => 1,
-      "temporal_within_24h_count" => 1,
-      "temporal_public_within_24h_count" => 1,
-      "closest_shared_ip_gap_seconds" => 30,
+  it "treats two distinct rare public IP overlaps as strong network evidence without making them very strong by themselves" do
+    evidence = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8"),
+      public_ip(ip: "1.1.1.1"),
     )
 
-    expect(described_class.score(with_temporal)).to eq(described_class.score(base))
+    score = described_class.score(evidence)
+
+    expect(score).to eq(45)
+    expect(described_class.confidence(score)).to eq("strong")
   end
 
-end
-
-
-RSpec.describe "supplemental authentication-pattern scoring isolation" do
-  it "does not change the score for supplemental authentication-pattern evidence" do
-    base = {
-      "shared_exact_ip_count" => 1,
-      "untrusted_public_ip_count" => 1,
-      "shared_public_ip_count" => 1,
-      "shared_ip_details" => [
+  it "uses temporal IP commonness so a historically reused address can still be distinctive near the overlap" do
+    base = exact_ip_evidence(public_ip(ip: "8.8.8.8", users: 20))
+    locally_distinctive = base.merge(
+      "temporal_ip_details" => [
+        {
+          "ip_address" => "8.8.8.8",
+          "closest_gap_seconds" => 1.hour.to_i,
+          "temporal_population_complete" => true,
+          "temporal_population_users_24h" => 2,
+          "temporal_population_users_7d" => 2,
+          "temporal_population_users_30d" => 3,
+        },
+      ],
+      "auth_proximity_details" => [
         {
           "ip_address" => "8.8.8.8",
           "public" => true,
-          "trusted" => false,
-          "sources_a" => ["auth_session"],
-          "sources_b" => ["auth_session"],
-          "user_count" => 2,
+          "closest_gap_seconds" => 1.hour.to_i,
+        },
+      ],
+      "auth_proximity_public_ip_within_24h_count" => 1,
+    )
+
+    expect(described_class.score(locally_distinctive)).to be > described_class.score(base)
+    expect(described_class.score(locally_distinctive)).to be >= 30
+  end
+
+  it "reduces exact-IP weight smoothly as an address is shared by more accounts" do
+    rare = exact_ip_evidence(public_ip(ip: "8.8.8.8", users: 2))
+    shared = exact_ip_evidence(public_ip(ip: "8.8.8.8", users: 5))
+    common = exact_ip_evidence(public_ip(ip: "8.8.8.8", users: 20))
+
+    expect(described_class.score(rare)).to be > described_class.score(shared)
+    expect(described_class.score(shared)).to be > described_class.score(common)
+    expect(described_class.confidence(described_class.score(shared))).to eq("weak")
+  end
+
+  it "weights Tor hosting and mobile context inside the exact-IP group instead of applying unrelated global penalties" do
+    ordinary = exact_ip_evidence(public_ip(ip: "8.8.8.8"))
+    tor = exact_ip_evidence(public_ip(ip: "8.8.8.8", tor: true))
+    hosting = exact_ip_evidence(public_ip(ip: "8.8.8.8", hosting: true))
+    mobile = exact_ip_evidence(public_ip(ip: "8.8.8.8", mobile: true))
+
+    expect(described_class.score(tor)).to be < described_class.score(hosting)
+    expect(described_class.score(hosting)).to be < described_class.score(mobile)
+    expect(described_class.score(mobile)).to be < described_class.score(ordinary)
+    expect(described_class.store_candidate?(described_class.score(tor), tor)).to eq(true)
+  end
+
+  it "uses only the strongest login-proximity bucket plus a small bounded repeat bonus" do
+    base = exact_ip_evidence(public_ip(ip: "8.8.8.8"))
+    score_for_gap = lambda do |seconds, repeat_count = 1|
+      evidence = base.merge(
+        "auth_proximity_details" => [
+          { "ip_address" => "8.8.8.8", "public" => true, "closest_gap_seconds" => seconds },
+        ],
+        "auth_proximity_public_ip_within_24h_count" => repeat_count,
+      )
+      result = described_class.score_with_breakdown(evidence)
+      result[:breakdown].find { |entry| entry["key"] == "v3_temporal_proximity" }&.fetch("points", 0).to_i
+    end
+
+    expect(score_for_gap.call(5.minutes.to_i)).to eq(10)
+    expect(score_for_gap.call(30.minutes.to_i)).to eq(9)
+    expect(score_for_gap.call(1.hour.to_i)).to eq(8)
+    expect(score_for_gap.call(6.hours.to_i)).to eq(7)
+    expect(score_for_gap.call(24.hours.to_i)).to eq(5)
+    expect(score_for_gap.call(72.hours.to_i)).to eq(3)
+    expect(score_for_gap.call(7.days.to_i)).to eq(2)
+    expect(score_for_gap.call(8.days.to_i)).to eq(0)
+    expect(score_for_gap.call(1.hour.to_i, 20)).to be <= described_class::GROUP_CAPS[:temporal_proximity]
+  end
+
+  it "keeps a direct A to B transition score-relevant beyond seven days with deliberate time decay" do
+    base = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8"),
+      public_ip(ip: "1.1.1.1"),
+    ).merge("public_ip_transition_population_complete" => true)
+
+    transition_points = lambda do |gap|
+      evidence = base.merge(
+        "public_ip_transition_details" => [
+          {
+            "from_ip" => "8.8.8.8",
+            "to_ip" => "1.1.1.1",
+            "closest_transition_gap_seconds" => gap,
+            "transition_population_complete" => true,
+            "transition_user_count" => 2,
+            "transition_user_count_24h" => gap <= 1.day.to_i ? 2 : nil,
+            "transition_user_count_7d" => gap <= 7.days.to_i ? 2 : nil,
+          }.compact,
+        ],
+      )
+      described_class.score_with_breakdown(evidence)[:breakdown]
+        .find { |entry| entry["key"] == "v3_public_ip_transitions" }&.fetch("points", 0).to_i
+    end
+
+    expect(transition_points.call(12.hours.to_i)).to be > transition_points.call(20.days.to_i)
+    expect(transition_points.call(20.days.to_i)).to be > transition_points.call(120.days.to_i)
+    expect(transition_points.call(120.days.to_i)).to be > 0
+    expect(transition_points.call(181.days.to_i)).to eq(0)
+  end
+
+  it "does not downweight a rare direct A to B sequence a second time merely because both endpoints were historically common" do
+    transition = {
+      "public_ip_transition_population_complete" => true,
+      "public_ip_transition_details" => [
+        {
+          "from_ip" => "8.8.8.8",
+          "to_ip" => "1.1.1.1",
+          "closest_transition_gap_seconds" => 12.hours.to_i,
+          "transition_population_complete" => true,
+          "transition_user_count" => 2,
+          "transition_user_count_24h" => 2,
+          "transition_user_count_7d" => 2,
         },
       ],
     }
-    enriched = base.merge(
-      "temporal_within_6h_count" => 2,
-      "temporal_within_72h_count" => 3,
-      "temporal_within_7d_count" => 4,
-      "max_temporal_ip_users_24h" => 2,
-      "auth_proximity_closest_gap_seconds" => 45.minutes.to_i,
-      "auth_proximity_within_30m_count" => 5,
-      "auth_proximity_within_1h_count" => 6,
-      "auth_proximity_within_6h_count" => 7,
-      "auth_proximity_within_24h_count" => 8,
-      "auth_proximity_within_72h_count" => 9,
-      "auth_proximity_within_7d_count" => 10,
-      "auth_proximity_same_client_within_30m_count" => 4,
-      "public_ip_transition_pattern_count" => 3,
-      "public_ip_transition_closest_gap_seconds" => 2.days.to_i,
-      "aligned_public_ip_transition_7d_count" => 2,
-      "aligned_public_ip_transition_30d_count" => 3,
-      "aligned_public_ip_transition_90d_count" => 3,
-      "max_public_ip_transition_users" => 2,
-      "shared_independent_network_count" => 1,
-      "client_signature_group_count" => 3,
-      "repeated_client_signature_group_count" => 2,
-      "client_signature_evidence_source_count" => 2,
-      "repeated_shared_auth_client_signature_count" => 1,
-      "auth_pattern_score_effect" => "none",
+    rare_endpoints = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8", users: 2),
+      public_ip(ip: "1.1.1.1", users: 2),
+    ).merge(transition)
+    common_endpoints = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8", users: 20),
+      public_ip(ip: "1.1.1.1", users: 20),
+    ).merge(transition)
+
+    transition_points = lambda do |evidence|
+      described_class.score_with_breakdown(evidence)[:breakdown]
+        .find { |entry| entry["key"] == "v3_public_ip_transitions" }&.fetch("points", 0).to_i
+    end
+
+    expect(transition_points.call(common_endpoints)).to eq(transition_points.call(rare_endpoints))
+    expect(described_class.confidence(described_class.score(common_endpoints))).to eq("moderate")
+  end
+
+  it "reduces transition weight when the same A to B pattern is common in the local population" do
+    base = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8"),
+      public_ip(ip: "1.1.1.1"),
+    ).merge("public_ip_transition_population_complete" => true)
+
+    build = lambda do |users|
+      base.merge(
+        "public_ip_transition_details" => [
+          {
+            "from_ip" => "8.8.8.8",
+            "to_ip" => "1.1.1.1",
+            "closest_transition_gap_seconds" => 12.hours.to_i,
+            "transition_population_complete" => true,
+            "transition_user_count" => users,
+            "transition_user_count_24h" => users,
+            "transition_user_count_7d" => users,
+          },
+        ],
+      )
+    end
+
+    expect(described_class.score(build.call(2))).to be > described_class.score(build.call(10))
+  end
+
+  it "treats two rare public IPs plus a closely aligned transition as strong and independent browser continuity as very strong" do
+    evidence = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8"),
+      public_ip(ip: "1.1.1.1"),
+    ).merge(
+      "public_ip_transition_population_complete" => true,
+      "public_ip_transition_details" => [
+        {
+          "from_ip" => "8.8.8.8",
+          "to_ip" => "1.1.1.1",
+          "closest_transition_gap_seconds" => 12.hours.to_i,
+          "transition_population_complete" => true,
+          "transition_user_count" => 2,
+          "transition_user_count_24h" => 2,
+          "transition_user_count_7d" => 2,
+        },
+      ],
     )
 
-    expect(AccountSecurity::AccountCorrelationPolicy.score(enriched)).to eq(
-      AccountSecurity::AccountCorrelationPolicy.score(base),
+    expect(described_class.score(evidence)).to eq(63)
+    expect(described_class.confidence(described_class.score(evidence))).to eq("strong")
+
+    with_browser = evidence.merge(
+      "browser_continuity_count" => 1,
+      "max_browser_continuity_users" => 2,
     )
+    expect(described_class.score(with_browser)).to eq(88)
+    expect(described_class.confidence(described_class.score(with_browser))).to eq("very_strong")
+  end
+
+  it "uses browser continuity only as positive supplemental evidence and never creates a candidate from it alone" do
+    browser_only = {
+      "browser_continuity_count" => 1,
+      "max_browser_continuity_users" => 2,
+      "registration_delta_minutes" => 5,
+    }
+
+    score = described_class.score(browser_only)
+
+    expect(score).to eq(25)
+    expect(described_class.confidence(score)).to eq("moderate")
+    expect(described_class.store_candidate?(score, browser_only)).to eq(false)
+    expect(described_class.score(browser_only.except("browser_continuity_count", "max_browser_continuity_users"))).to eq(0)
+  end
+
+  it "commonness-corrects the unified client-signature group and treats incomplete population data conservatively" do
+    rare_complete = {
+      "client_signature_group_count" => 1,
+      "max_client_signature_group_users" => 2,
+      "client_signature_population_complete" => true,
+    }
+    common_complete = rare_complete.merge("max_client_signature_group_users" => 10)
+    incomplete = rare_complete.merge("client_signature_population_complete" => false)
+
+    expect(described_class.score(rare_complete)).to eq(6)
+    expect(described_class.score(common_complete)).to be < described_class.score(rare_complete)
+    expect(described_class.score(incomplete)).to be < described_class.score(rare_complete)
+  end
+
+  it "does not double-count IPv4 /32 shared-network evidence but can use an independent IPv6 prefix weakly" do
+    ipv4 = {
+      "shared_independent_network_count" => 1,
+      "shared_independent_networks" => ["8.8.8.8/32"],
+      "max_independent_shared_network_users" => 2,
+    }
+    ipv6 = ipv4.merge("shared_independent_networks" => ["2001:db8::/64"])
+
+    expect(described_class.score(ipv4)).to eq(0)
+    expect(described_class.score(ipv6)).to eq(4)
+  end
+
+  it "uses registration timing only as a small corroborating signal" do
+    timing_only = { "registration_delta_minutes" => 10 }
+    with_primary = timing_only.merge(
+      "client_signature_group_count" => 1,
+      "max_client_signature_group_users" => 2,
+      "client_signature_population_complete" => true,
+    )
+
+    expect(described_class.score(timing_only)).to eq(0)
+    breakdown = described_class.score_with_breakdown(with_primary)[:breakdown]
+    expect(breakdown.find { |entry| entry["key"] == "v3_registration_timing" }["points"]).to eq(5)
+  end
+
+  it "prevents a pile-up of partly overlapping network signals from reaching very strong without independent or exceptional evidence" do
+    evidence = exact_ip_evidence(
+      public_ip(ip: "8.8.8.8"),
+      public_ip(ip: "1.1.1.1"),
+      public_ip(ip: "9.9.9.9"),
+    ).merge(
+      "auth_proximity_details" => [
+        { "ip_address" => "8.8.8.8", "public" => true, "closest_gap_seconds" => 5.minutes.to_i },
+      ],
+      "auth_proximity_public_ip_within_24h_count" => 8,
+      "public_ip_transition_population_complete" => true,
+      "public_ip_transition_details" => [
+        {
+          "from_ip" => "8.8.8.8",
+          "to_ip" => "1.1.1.1",
+          "closest_transition_gap_seconds" => 20.days.to_i,
+          "transition_population_complete" => true,
+          "transition_user_count" => 2,
+        },
+      ],
+      "client_signature_group_count" => 1,
+      "max_client_signature_group_users" => 2,
+      "client_signature_population_complete" => true,
+      "registration_delta_minutes" => 30,
+    )
+
+    result = described_class.score_with_breakdown(evidence)
+
+    expect(result[:score]).to eq(69)
+    expect(described_class.confidence(result[:score])).to eq("strong")
+    guardrail = result[:breakdown].find { |entry| entry["key"] == "v3_very_strong_guardrail" }
+    expect(guardrail).to be_present
+    expect(guardrail["points"]).to be < 0
+  end
+
+  it "uses the v3 confidence bands" do
+    expect(described_class.confidence(24)).to eq("weak")
+    expect(described_class.confidence(25)).to eq("moderate")
+    expect(described_class.confidence(44)).to eq("moderate")
+    expect(described_class.confidence(45)).to eq("strong")
+    expect(described_class.confidence(69)).to eq("strong")
+    expect(described_class.confidence(70)).to eq("very_strong")
+  end
+
+  it "does not score the legacy overlapping network and signature counters in addition to their v3-ready groups" do
+    base = exact_ip_evidence(public_ip(ip: "8.8.8.8"))
+    legacy_noise = base.merge(
+      "shared_network_count" => 8,
+      "shared_session_signature_count" => 8,
+      "repeated_shared_session_signature_count" => 8,
+    )
+
+    expect(described_class.score(legacy_noise)).to eq(described_class.score(base))
   end
 end

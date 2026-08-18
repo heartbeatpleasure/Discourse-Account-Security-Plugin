@@ -19,6 +19,7 @@ RSpec.describe AccountSecurity::AdminController do
       [:delete, "/admin/plugins/account-security/events/1/notification-suppression.json", {}],
       [:post, "/admin/plugins/account-security/lookup.json", { account_security_ip: "8.8.8.8" }],
       [:get, "/admin/plugins/account-security/correlations.json", {}],
+      [:get, "/admin/plugins/account-security/correlations/scan-status.json", {}],
       [:put, "/admin/plugins/account-security/correlations/1.json", { status: "monitor" }],
       [:post, "/admin/plugins/account-security/correlations/1/duplicate-user-note.json", { confirmed: true }],
       [:post, "/admin/plugins/account-security/correlations/rebuild.json", {}],
@@ -57,6 +58,26 @@ RSpec.describe AccountSecurity::AdminController do
         params: { frequency: "weekly", time: "11:00", weekday: "monday" }
 
     expect(response.status).to eq(404)
+  end
+
+  it "returns a lightweight live correlation-scan status for administrators" do
+    sign_in(admin)
+    allow(AccountSecurity::AccountCorrelationScanner).to receive(:status).and_return(
+      state: "running",
+      pairs_processed: 250,
+      diagnostics: {
+        total_pairs_processed: 250,
+        large_ip_group_summaries: [{ ip_address: "8.8.8.8", user_count: 25 }],
+      },
+    )
+
+    get "/admin/plugins/account-security/correlations/scan-status.json"
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body.dig("scan", "state")).to eq("running")
+    expect(response.parsed_body.dig("scan", "pairs_processed")).to eq(250)
+    expect(response.parsed_body.dig("scan", "diagnostics", "total_pairs_processed")).to eq(250)
+    expect(response.parsed_body.dig("scan", "diagnostics")).not_to have_key("large_ip_group_summaries")
   end
 
   it "requires explicit confirmation before classifying a correlation as a confirmed duplicate" do

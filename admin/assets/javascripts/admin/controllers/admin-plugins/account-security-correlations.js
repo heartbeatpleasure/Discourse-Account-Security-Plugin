@@ -1,7 +1,7 @@
 import Controller from "@ember/controller";
 import { action } from "@ember/object";
 import { tracked } from "@glimmer/tracking";
-import { schedule } from "@ember/runloop";
+import { cancel, later, schedule } from "@ember/runloop";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import getURL from "discourse/lib/get-url";
@@ -20,7 +20,12 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   @tracked activeView = "groups";
   @tracked viewInitialized = false;
 
+  _scanPollTimer = null;
+  _scanPollingActive = false;
+
   resetState() {
+    this.stopScanPolling();
+    this._scanPollingActive = true;
     this.data = undefined;
     this.isLoading = false;
     this.isScanning = false;
@@ -414,7 +419,9 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       auth_pattern_history_incomplete:
         evidence.auth_pattern_history_complete !== true ||
         evidence.core_auth_history_complete !== true ||
-        evidence.exact_ip_population_complete !== true,
+        evidence.exact_ip_population_complete !== true ||
+        (Number(evidence.client_signature_group_count || 0) > 0 &&
+          evidence.client_signature_population_complete !== true),
       network_context_summary: {
         ...networkSummary,
         organizations_display: (networkSummary.organizations || []).join(", "),
@@ -846,9 +853,11 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
     };
   }
 
-  @action
-  async loadCorrelations() {
-    this.isLoading = true;
+  async fetchCorrelations({ quiet = false } = {}) {
+    if (!quiet) {
+      this.isLoading = true;
+    }
+
     try {
       const data = await ajax("/admin/plugins/account-security/correlations.json", {
         data: {
@@ -860,10 +869,85 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       });
       this.data = this.decorateData(data);
       this.initializeView(this.data);
+      this.syncScanPolling();
+      return true;
     } catch (error) {
       popupAjaxError(error);
+      return false;
     } finally {
-      this.isLoading = false;
+      if (!quiet) {
+        this.isLoading = false;
+      }
+    }
+  }
+
+  @action
+  async loadCorrelations() {
+    return this.fetchCorrelations();
+  }
+
+  scanStateBusy(scan = this.data?.scan) {
+    return scan?.state === "queued" || scan?.state === "running";
+  }
+
+  syncScanPolling() {
+    if (this.scanStateBusy()) {
+      this.startScanPolling();
+    } else {
+      this.stopScanPolling();
+    }
+  }
+
+  startScanPolling() {
+    if (!this._scanPollingActive) {
+      return;
+    }
+
+    this.isScanning = true;
+    if (this._scanPollTimer) {
+      return;
+    }
+
+    this._scanPollTimer = later(this, this.pollScanStatus, 2000);
+  }
+
+  stopScanPolling() {
+    if (this._scanPollTimer) {
+      cancel(this._scanPollTimer);
+      this._scanPollTimer = null;
+    }
+    this.isScanning = false;
+  }
+
+  deactivateScanPolling() {
+    this._scanPollingActive = false;
+    this.stopScanPolling();
+  }
+
+  async pollScanStatus() {
+    this._scanPollTimer = null;
+
+    try {
+      const response = await ajax(
+        "/admin/plugins/account-security/correlations/scan-status.json"
+      );
+      if (!this._scanPollingActive) {
+        return;
+      }
+
+      const scan = this.decorateScan(response?.scan);
+      this.data = this.data ? { ...this.data, scan } : { scan };
+
+      if (this.scanStateBusy(scan)) {
+        this.startScanPolling();
+        return;
+      }
+
+      this.stopScanPolling();
+      await this.fetchCorrelations({ quiet: true });
+    } catch (error) {
+      this.stopScanPolling();
+      popupAjaxError(error);
     }
   }
 
@@ -877,11 +961,7 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
   }
 
   get scanBusy() {
-    return (
-      this.isScanning ||
-      this.data?.scan?.state === "queued" ||
-      this.data?.scan?.state === "running"
-    );
+    return this.isScanning || this.scanStateBusy();
   }
 
   get hasPreviousPage() {
@@ -979,12 +1059,13 @@ export default class AdminPluginsAccountSecurityCorrelationsController extends C
       await ajax("/admin/plugins/account-security/correlations/rebuild.json", {
         type: "POST",
       });
-      await this.loadCorrelations();
+      await this.fetchCorrelations({ quiet: true });
     } catch (error) {
       popupAjaxError(error);
-      await this.loadCorrelations();
-    } finally {
-      this.isScanning = false;
+      const refreshed = await this.fetchCorrelations({ quiet: true });
+      if (!refreshed || !this.scanStateBusy()) {
+        this.stopScanPolling();
+      }
     }
   }
 }
